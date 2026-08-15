@@ -89,6 +89,22 @@ if (existsSync(webDist)) {
   });
 }
 
+// JSON error handler. Without this, a malformed body (express.json throwing
+// SyntaxError) or an unhandled route error returns an HTML stack trace page to
+// an API client. Must be registered last and must take four args for Express
+// to recognise it as an error handler.
+app.use((err: Error & { status?: number; statusCode?: number }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    // Response already in flight — delegate so Express destroys the socket
+    // rather than trying to write a second set of headers.
+    next(err);
+    return;
+  }
+  const status = err.status ?? err.statusCode ?? 500;
+  if (status >= 500) console.error("[understory] unhandled error:", err.message);
+  res.status(status).json({ error: status >= 500 ? "internal server error" : err.message });
+});
+
 const port = Number(process.env.PORT ?? 3800);
 app.listen(port, process.env.HOST || "0.0.0.0", () => {
   console.log(`understory serving bundle ${bundleRoot} on :${port} (web + /api + /mcp)`);

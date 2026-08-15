@@ -15,6 +15,12 @@ const MAX_STEPS = 12;
 
 export interface AgentOptions {
   model?: string;
+  /**
+   * Aborts the underlying model call. The chat endpoint wires this to the
+   * HTTP request so a client disconnect stops the agent loop instead of
+   * letting it keep spending tokens on a stream nobody is reading.
+   */
+  abortSignal?: AbortSignal;
 }
 
 export interface QueryResult {
@@ -200,11 +206,28 @@ export async function streamChat(
       messages,
       tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
       stopWhen: stepCountIs(MAX_STEPS),
+      abortSignal: options.abortSignal,
       onFinish: async ({ text }) => {
         // Persist only turns that actually touched the bundle.
         if (recorder.steps.length > 0) {
           await traceStore(kb).save(recorder.finalize("chat", input, text, "success", modelChain));
         }
+      },
+      // Mid-stream failures never reach the caller's try/catch — streamText
+      // swallows them into the stream. Without this, a provider dying
+      // halfway through a chat turn that already wrote files was recorded
+      // as nothing at all.
+      onError: async ({ error }) => {
+        const outcome = filesChanged.size > 0 ? "partial" : "failed";
+        await traceStore(kb)
+          .save(recorder.finalize("chat", input, errorMessage(error), outcome, modelChain))
+          .catch(() => {});
+      },
+      onAbort: async () => {
+        const outcome = filesChanged.size > 0 ? "partial" : "failed";
+        await traceStore(kb)
+          .save(recorder.finalize("chat", input, "aborted by client", outcome, modelChain))
+          .catch(() => {});
       },
     });
     return { result, filesChanged };
