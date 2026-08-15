@@ -6,6 +6,8 @@ The layer beneath your agents: a self-wiring, plain-markdown memory. Every fact 
 
 Bundles follow the [Open Knowledge Format (OKF) v0.1 spec](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — plain markdown files with YAML frontmatter, readable by humans, diffable in git, portable across tools.
 
+Fork: [REASON-labs/understory](https://github.com/REASON-labs/understory) (primary) · [thecodacus/understory](https://github.com/thecodacus/understory) (upstream)
+
 **Three ways in, one agent:**
 
 - **MCP server** — `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` tools over stdio or streamable HTTP. Each call drives an internal LLM agent with the OKF spec in its system prompt.
@@ -16,6 +18,21 @@ Bundles follow the [Open Knowledge Format (OKF) v0.1 spec](https://github.com/Go
 **Design rule: conformance is enforced in code, not prompts.** The deterministic bundle layer validates frontmatter (`type` required), regenerates `index.md` files, appends `log.md` entries (newest-first, spec §7), and sandboxes all paths to the bundle root. The LLM decides *what* to change; the code guarantees the result is a conformant bundle.
 
 ## Quick start (Docker)
+
+### From source (recommended)
+
+Clone your fork and build locally:
+
+```bash
+git clone https://github.com/REASON-labs/understory.git
+cd understory
+cp .env.example .env   # add your API key
+docker compose up -d
+```
+
+The repo's [docker-compose.yml](docker-compose.yml) builds from source and mounts `./sample-bundle`.
+
+### Pre-built image
 
 No clone needed — the image is public. Save this as `docker-compose.yml`:
 

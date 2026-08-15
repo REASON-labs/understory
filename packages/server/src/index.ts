@@ -85,6 +85,6 @@ if (existsSync(webDist)) {
 }
 
 const port = Number(process.env.PORT ?? 3800);
-app.listen(port, "0.0.0.0", () => {
+app.listen(port, process.env.HOST || "0.0.0.0", () => {
   console.log(`understory serving bundle ${bundleRoot} on :${port} (web + /api + /mcp)`);
 });
