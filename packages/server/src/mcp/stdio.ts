@@ -37,7 +37,7 @@ try {
 }
 
 const kb = new KnowledgeBase(bundleRoot, {
-  gitAutocommit: process.env.GIT_AUTOCOMMIT === "true",
+  gitAutocommit: process.env.GIT_AUTOCOMMIT !== "false",
 });
 const server = await buildMcpServer(kb);
 await server.connect(new StdioServerTransport());

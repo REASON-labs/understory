@@ -18,7 +18,7 @@ if (!bundleRoot) {
 }
 
 const kb = new KnowledgeBase(bundleRoot, {
-  gitAutocommit: process.env.GIT_AUTOCOMMIT === "true",
+  gitAutocommit: process.env.GIT_AUTOCOMMIT !== "false",
 });
 
 startDreamer(kb);

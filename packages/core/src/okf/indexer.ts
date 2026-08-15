@@ -50,7 +50,8 @@ export async function regenerateIndex(bundle: Bundle, dir = "/"): Promise<string
   }
 
   const content = sections.join("\n");
-  await fs.writeFile(path.join(absDir, "index.md"), content, "utf-8");
+  // Through the bundle, not fs, so index regeneration is rollback-able.
+  await bundle.writeFile(path.join(absDir, "index.md"), content);
   return content;
 }
 
