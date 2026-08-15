@@ -8,13 +8,19 @@ import {
 } from "../providers/index.js";
 import { withFallback } from "../providers/fallback.js";
 import { buildSystemPrompt } from "./system-prompt.js";
-import { buildReadTools, buildWriteTools, formatTree } from "./tools.js";
+import { buildReadTools, buildWriteTools, formatTree, type QueryScope } from "./tools.js";
 import { TraceRecorder, TraceStore } from "./trace.js";
 
 const MAX_STEPS = 12;
 
 export interface AgentOptions {
   model?: string;
+  /**
+   * Caller-imposed retrieval scope, supplied by an MCP client through
+   * memory_query. Honoured by runQuery only: a mutation must be able to write
+   * anywhere in the bundle, so scoping one would be actively harmful.
+   */
+  scope?: QueryScope;
   /**
    * Aborts the underlying model call. The chat endpoint wires this to the
    * HTTP request so a client disconnect stops the agent loop instead of
@@ -75,8 +81,15 @@ interface ResolvedAgentModel {
   modelChain: string[];
 }
 
-async function promptContext(kb: KnowledgeBase, mode: "query" | "mutate" | "chat") {
-  const [types, tree] = await Promise.all([kb.listTypes(), kb.listTree()]);
+async function promptContext(
+  kb: KnowledgeBase,
+  mode: "query" | "mutate" | "chat",
+  scope?: QueryScope
+) {
+  // A directory-scoped query gets a directory-scoped tree. The full tree goes
+  // into the system prompt on every turn, so this is also the cheapest handle
+  // we have on prompt size.
+  const [types, tree] = await Promise.all([kb.listTypes(), kb.listTree(scope?.directory)]);
   return { existingTypes: types, treeSummary: formatTree(tree), mode };
 }
 
@@ -136,7 +149,7 @@ export async function runQuery(
   question: string,
   options: AgentOptions = {}
 ): Promise<QueryResult> {
-  const ctx = await promptContext(kb, "query");
+  const ctx = await promptContext(kb, "query", options.scope);
   const recorder = new TraceRecorder();
   let modelChain: string[] = [];
   try {
@@ -146,7 +159,7 @@ export async function runQuery(
       model: resolved.model,
       system: buildSystemPrompt(ctx),
       prompt: question,
-      tools: buildReadTools(kb, recorder),
+      tools: buildReadTools(kb, recorder, options.scope),
       stopWhen: stepCountIs(MAX_STEPS),
     });
     const trace = recorder.finalize("query", question, result.text, "success", modelChain);

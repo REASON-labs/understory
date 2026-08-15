@@ -65,7 +65,9 @@ export async function runQueryCached(
 
   const fingerprint = await bundleFingerprint(kb);
   const key = createHash("sha256")
-    .update(`${fingerprint}\n${normalize(question)}\n${options.model ?? ""}`)
+    .update(
+      `${fingerprint}\n${normalize(question)}\n${options.model ?? ""}\n${scopeKey(options.scope)}`
+    )
     .digest("hex");
 
   // Layer 1: exact cache — same question, unchanged bundle.
@@ -112,4 +114,22 @@ export function clearQueryCache(): void {
 
 function normalize(question: string): string {
   return question.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Canonical string for a retrieval scope, for use in the cache key.
+ *
+ * Without this, asking the same question with and without a scope would
+ * collide, and a scoped query would be served a previously cached unscoped
+ * answer — silently, and in exactly the situation where the caller asked for
+ * precision. Tags are sorted so ["a","b"] and ["b","a"] share an entry.
+ */
+function scopeKey(scope: AgentOptions["scope"]): string {
+  if (!scope) return "";
+  const tags = [...(scope.tags ?? [])].map((t) => t.toLowerCase()).sort();
+  return [
+    (scope.type ?? "").toLowerCase(),
+    tags.join(","),
+    (scope.directory ?? "").toLowerCase(),
+  ].join("|");
 }

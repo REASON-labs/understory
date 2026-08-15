@@ -70,8 +70,8 @@ export class KnowledgeBase {
     return this.bundle.readConcept(conceptPath);
   }
 
-  listTree(): Promise<TreeNode> {
-    return this.bundle.listTree();
+  listTree(dir?: string): Promise<TreeNode> {
+    return this.bundle.listTree(dir ?? "/");
   }
 
   search(query: string, options?: SearchOptions): Promise<SearchHit[]> {

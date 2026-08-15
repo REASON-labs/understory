@@ -1,6 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { KnowledgeBase, runMutation, runQueryCached, type MutationOutcome } from "@understory/core";
+import {
+  KnowledgeBase,
+  runMutation,
+  runQueryCached,
+  type MutationOutcome,
+  type QueryScope,
+} from "@understory/core";
 import { buildSeedMemory, seedInstructions } from "./seed.js";
 
 /**
@@ -37,13 +43,36 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
     {
       title: "Query the knowledge base",
       description: queryDescription(seed),
-      inputSchema: { question: z.string().describe("The question to answer") },
+      inputSchema: {
+        question: z.string().describe("The question to answer"),
+        // These mirror the filters the internal agent's search tool has always
+        // had. Before this, they were reachable only by the inner agent's own
+        // choice, so an external caller could ask for precision but not get it.
+        type: z
+          .string()
+          .optional()
+          .describe(
+            "Restrict the search to concepts of this exact type (see memory_status for the types in use)"
+          ),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe("Restrict to concepts carrying ALL of these tags"),
+        directory: z
+          .string()
+          .optional()
+          .describe(
+            'Restrict to one directory subtree, bundle-relative, e.g. "/services". Also shrinks the context the internal agent works from.'
+          ),
+      },
     },
-    async ({ question }) => {
-      const { answer, source } = await runQueryCached(kb, question);
+    async ({ question, type, tags, directory }) => {
+      const scope = buildScope({ type, tags, directory });
+      const { answer, source } = await runQueryCached(kb, question, scope ? { scope } : {});
       const marker = source === "cache" ? "\n\n(cached answer)" : source === "hot" ? "\n\n(hot memory)" : "";
+      const scopeNote = scope ? `\n\n(scoped: ${describeScope(scope)})` : "";
       return {
-        content: [{ type: "text", text: `${answer}${marker}` }],
+        content: [{ type: "text", text: `${answer}${marker}${scopeNote}` }],
       };
     }
   );
@@ -240,4 +269,33 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
   );
 
   return server;
+}
+
+/**
+ * Build a QueryScope from the tool arguments, or null when nothing meaningful
+ * was supplied. Returning null rather than an empty object matters: an empty
+ * scope would still change the cache key and still suppress hot-memory Q&A
+ * reuse, penalising every unscoped caller for no benefit.
+ */
+function buildScope(args: {
+  type?: string;
+  tags?: string[];
+  directory?: string;
+}): QueryScope | null {
+  const type = args.type?.trim() || undefined;
+  const tags = args.tags?.map((t) => t.trim()).filter(Boolean);
+  const directory = args.directory?.trim() || undefined;
+  if (!type && !tags?.length && !directory) return null;
+  return { type, tags: tags?.length ? tags : undefined, directory };
+}
+
+/** Human-readable scope, echoed back so the caller can see it was applied. */
+function describeScope(scope: QueryScope): string {
+  return [
+    scope.type ? `type=${scope.type}` : null,
+    scope.tags?.length ? `tags=${scope.tags.join("+")}` : null,
+    scope.directory ? `directory=${scope.directory}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }

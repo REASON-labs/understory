@@ -3,7 +3,7 @@ export { parseDoc, serializeDoc, hasNonEmptyType } from "./frontmatter.js";
 export { Bundle, BundleError, replaceSection } from "./bundle.js";
 export { regenerateIndex, regenerateIndexChain } from "./indexer.js";
 export { appendLog, readLog } from "./logger.js";
-export { searchBundle, listTypes, type SearchOptions } from "./search.js";
+export { searchBundle, listTypes, matchesFilters, inDirectory, type SearchOptions } from "./search.js";
 export { validateBundle } from "./validate.js";
 export { lintBundle } from "./lint.js";
 export type { LintReport, LintFinding, BrokenLink } from "./lint.js";
