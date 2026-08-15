@@ -13,8 +13,22 @@ export interface ModelConfig {
   model: string;
 }
 
-const LEGACY_NOTICE =
-  "[understory] using legacy env vars. Migrate to LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT.";
+/**
+ * Legacy env vars removed in this fork. Anyone still setting one of these
+ * gets a pointed error instead of silently falling back to a hardcoded
+ * hosted endpoint (and, in the ANTHROPIC_API_KEY case, silently spending
+ * money at api.anthropic.com).
+ */
+const REMOVED_ENV_VARS = [
+  "LLM_PROVIDER",
+  "ANTHROPIC_API_KEY",
+  "OPENROUTER_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "LLAMACPP_BASE_URL",
+  "LLAMACPP_API_KEY",
+  "LOCAL_BASE_URL",
+  "LOCAL_API_KEY",
+] as const;
 
 /** Ensure the URL ends in /v1 — llama-server serves the OpenAI API there. */
 function normalizeV1(baseURL: string): string {
@@ -30,108 +44,36 @@ function parseFormat(value: string | undefined, fallback: ApiFormat, envName: st
   return format;
 }
 
-let legacyNoticed = false;
-
-function legacyNotice(): void {
-  if (legacyNoticed) return;
-  legacyNoticed = true;
-  console.error(LEGACY_NOTICE);
-}
-
-function legacyConfig(env: NodeJS.ProcessEnv): ModelConfig | null {
-  const provider = env.LLM_PROVIDER;
-  if (provider) {
-    switch (provider) {
-      case "anthropic":
-        if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required for legacy anthropic provider");
-        legacyNotice();
-        return {
-          baseURL: "https://api.anthropic.com/v1",
-          apiKey: env.ANTHROPIC_API_KEY,
-          format: "anthropic",
-          model: env.LLM_MODEL ?? "claude-sonnet-5",
-        };
-      case "openrouter":
-        if (!env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is required for legacy openrouter provider");
-        legacyNotice();
-        return {
-          baseURL: "https://openrouter.ai/api/v1",
-          apiKey: env.OPENROUTER_API_KEY,
-          format: "openai",
-          model: env.LLM_MODEL ?? "anthropic/claude-sonnet-5",
-        };
-      case "llamacpp":
-        if (!env.LLAMACPP_BASE_URL) throw new Error("LLAMACPP_BASE_URL is required for legacy llamacpp provider");
-        legacyNotice();
-        return {
-          baseURL: env.LLAMACPP_BASE_URL,
-          apiKey: env.LLAMACPP_API_KEY ?? "not-needed",
-          format: "openai",
-          model: env.LLM_MODEL ?? "",
-        };
-      case "deepseek":
-        if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required for legacy deepseek provider");
-        legacyNotice();
-        return {
-          baseURL: "https://api.deepseek.com/v1",
-          apiKey: env.DEEPSEEK_API_KEY,
-          format: "openai",
-          model: env.LLM_MODEL ?? "deepseek-chat",
-        };
-      case "local":
-        if (!env.LOCAL_BASE_URL) throw new Error("LOCAL_BASE_URL is required for legacy local provider");
-        legacyNotice();
-        return {
-          baseURL: env.LOCAL_BASE_URL,
-          apiKey: env.LOCAL_API_KEY ?? "not-needed",
-          format: "openai",
-          model: env.LLM_MODEL ?? "local-model",
-        };
-      default:
-        throw new Error(`Unknown legacy LLM_PROVIDER "${provider}" (anthropic|openrouter|llamacpp|deepseek|local)`);
-    }
-  }
-
-  const configured = [
-    env.ANTHROPIC_API_KEY ? "ANTHROPIC_API_KEY" : null,
-    env.OPENROUTER_API_KEY ? "OPENROUTER_API_KEY" : null,
-    env.LLAMACPP_BASE_URL ? "LLAMACPP_BASE_URL" : null,
-    env.DEEPSEEK_API_KEY ? "DEEPSEEK_API_KEY" : null,
-    env.LOCAL_BASE_URL ? "LOCAL_BASE_URL" : null,
-  ].filter(Boolean) as string[];
-
-  if (configured.length === 0) return null;
-  if (configured.length === 1 && configured[0] === "ANTHROPIC_API_KEY") {
-    legacyNotice();
-    return {
-      baseURL: "https://api.anthropic.com/v1",
-      apiKey: env.ANTHROPIC_API_KEY!,
-      format: "anthropic",
-      model: env.LLM_MODEL ?? "claude-sonnet-5",
-    };
-  }
-
+/**
+ * Fail loudly if a removed legacy var is set. Silently ignoring it would be
+ * worse than erroring: the operator thinks they configured a model and the
+ * process would instead use whatever LLM_API_* happens to be lying around.
+ */
+function assertNoRemovedEnv(env: NodeJS.ProcessEnv): void {
+  const found = REMOVED_ENV_VARS.filter((name) => env[name]);
+  if (found.length === 0) return;
   throw new Error(
-    `Ambiguous legacy LLM configuration (${configured.join(", ")}). Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT, or set LLM_PROVIDER explicitly.`
+    `Removed env var${found.length > 1 ? "s" : ""} set: ${found.join(", ")}. ` +
+      "The legacy provider config was removed in this fork. Use " +
+      "LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT (openai|anthropic) + LLM_MODEL."
   );
 }
 
 export function resolveModelConfig(env: NodeJS.ProcessEnv = process.env): ModelConfig {
-  if (env.LLM_API_BASE_URL) {
-    return {
-      baseURL: env.LLM_API_BASE_URL,
-      apiKey: env.LLM_API_KEY ?? "not-needed",
-      format: parseFormat(env.LLM_API_FORMAT, "openai", "LLM_API_FORMAT"),
-      model: env.LLM_MODEL ?? "",
-    };
+  assertNoRemovedEnv(env);
+
+  if (!env.LLM_API_BASE_URL) {
+    throw new Error(
+      "No LLM configured. Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT + LLM_MODEL."
+    );
   }
 
-  const legacy = legacyConfig(env);
-  if (legacy) return legacy;
-
-  throw new Error(
-    "No LLM configured. Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT + LLM_MODEL."
-  );
+  return {
+    baseURL: env.LLM_API_BASE_URL,
+    apiKey: env.LLM_API_KEY ?? "not-needed",
+    format: parseFormat(env.LLM_API_FORMAT, "openai", "LLM_API_FORMAT"),
+    model: env.LLM_MODEL ?? "",
+  };
 }
 
 export function resolveFallbackConfig(env: NodeJS.ProcessEnv = process.env): ModelConfig | null {

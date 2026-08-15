@@ -1,7 +1,7 @@
 /**
  * Verifies the seed auto-refresh: within ONE stdio session, memory_add a new
  * fact, then re-list tools — memory_query's description must now mention it.
- *   SMOKE_BUNDLE=<abs path> LLAMACPP_BASE_URL=... LLM_PROVIDER=llamacpp tsx seed-refresh-test.mts
+ *   SMOKE_BUNDLE=<abs path> LLM_API_BASE_URL=http://localhost:8080/v1 tsx seed-refresh-test.mts
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";

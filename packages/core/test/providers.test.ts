@@ -81,22 +81,6 @@ describe("discoverLlamaCppModel", () => {
 // ── Generic provider config (PR #5) ────────────────────────────────
 
 describe("generic provider config", () => {
-  it("logs the legacy notice at most once per process", () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      // First call should log the deprecation notice.
-      resolveModelConfig(env({ LLM_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "a" }));
-      // Second call (different legacy provider) should not log it again.
-      resolveModelConfig(env({ LLM_PROVIDER: "llamacpp", LLAMACPP_BASE_URL: "http://x:8080" }));
-      const legacyCalls = spy.mock.calls.filter(
-        (c) => typeof c[0] === "string" && c[0].includes("legacy env vars")
-      );
-      expect(legacyCalls).toHaveLength(1);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
   it("reads the primary and fallback slots from generic env vars", () => {
     expect(
       resolveModelConfig(
@@ -129,52 +113,48 @@ describe("generic provider config", () => {
     });
   });
 
-  it("maps legacy providers to the generic model config", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+  it("rejects every removed legacy env var", () => {
+    const removed: Record<string, string> = {
+      LLM_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "a",
+      OPENROUTER_API_KEY: "o",
+      DEEPSEEK_API_KEY: "d",
+      LLAMACPP_BASE_URL: "http://localhost:8080",
+      LLAMACPP_API_KEY: "k",
+      LOCAL_BASE_URL: "http://local/v1",
+      LOCAL_API_KEY: "k",
+    };
 
-    expect(resolveModelConfig(env({ LLM_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "a" }))).toMatchObject({
-      baseURL: "https://api.anthropic.com/v1",
-      apiKey: "a",
-      format: "anthropic",
-      model: "claude-sonnet-5",
-    });
-    expect(resolveModelConfig(env({ LLM_PROVIDER: "openrouter", OPENROUTER_API_KEY: "o" }))).toMatchObject({
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey: "o",
-      format: "openai",
-      model: "anthropic/claude-sonnet-5",
-    });
-    expect(resolveModelConfig(env({ LLM_PROVIDER: "llamacpp", LLAMACPP_BASE_URL: "http://localhost:8080" }))).toMatchObject({
-      baseURL: "http://localhost:8080",
-      apiKey: "not-needed",
-      format: "openai",
-      model: "",
-    });
-    expect(resolveModelConfig(env({ LLM_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "d" }))).toMatchObject({
-      baseURL: "https://api.deepseek.com/v1",
-      apiKey: "d",
-      format: "openai",
-      model: "deepseek-chat",
-    });
-    expect(resolveModelConfig(env({ LLM_PROVIDER: "local", LOCAL_BASE_URL: "http://local/v1" }))).toMatchObject({
-      baseURL: "http://local/v1",
-      apiKey: "not-needed",
-      format: "openai",
-      model: "local-model",
-    });
+    for (const [name, value] of Object.entries(removed)) {
+      expect(() => resolveModelConfig(env({ [name]: value }))).toThrow(
+        new RegExp(`Removed env var set: ${name}`)
+      );
+    }
   });
 
-  it("keeps the historical anthropic default but fails closed on ambiguous legacy env", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+  it("rejects removed vars even when a valid generic config is present", () => {
+    // Fail closed: don't silently ignore config the operator thinks is live.
+    expect(() =>
+      resolveModelConfig(
+        env({
+          LLM_API_BASE_URL: "http://localhost:8080/v1",
+          LLM_MODEL: "m",
+          ANTHROPIC_API_KEY: "a",
+        })
+      )
+    ).toThrow(/Removed env var set: ANTHROPIC_API_KEY/);
+  });
 
-    expect(resolveModelConfig(env({ ANTHROPIC_API_KEY: "a" }))).toMatchObject({
-      format: "anthropic",
-      apiKey: "a",
-    });
+  it("lists every removed var that is set", () => {
     expect(() =>
       resolveModelConfig(env({ ANTHROPIC_API_KEY: "a", OPENROUTER_API_KEY: "o" }))
-    ).toThrow(/Ambiguous legacy LLM configuration/);
+    ).toThrow(/Removed env vars set: ANTHROPIC_API_KEY, OPENROUTER_API_KEY/);
   });
+
+  it("throws when nothing is configured at all", () => {
+    expect(() => resolveModelConfig(env({}))).toThrow(/No LLM configured/);
+  });
+
 });
 
 // ── Fallback middleware (PR #5) ─────────────────────────────────────

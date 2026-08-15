@@ -70,7 +70,8 @@ docker compose up -d
 ### Choosing a provider
 
 The generic provider system supports any OpenAI-compatible or Anthropic-compatible API.
-Set `LLM_API_BASE_URL` + `LLM_API_KEY` + `LLM_MODEL` and leave `LLM_PROVIDER` unset.
+Set `LLM_API_BASE_URL` + `LLM_API_KEY` + `LLM_API_FORMAT` + `LLM_MODEL`. This is the only
+supported configuration path.
 
 **DeepSeek:**
 ```bash
@@ -103,7 +104,11 @@ LLM_API_BASE_URL=http://localhost:8080/v1 LLM_MODEL= \
 LLM_FALLBACK_API_BASE_URL=https://api.deepseek.com/v1 LLM_FALLBACK_API_KEY=sk-... LLM_FALLBACK_MODEL=deepseek-chat
 ```
 
-The old `LLM_PROVIDER` + per-provider key env vars still work (backward-compatible) but are deprecated.
+> **Removed in this fork:** the old `LLM_PROVIDER` enum and per-provider keys
+> (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`,
+> `LLAMACPP_BASE_URL`, `LLAMACPP_API_KEY`, `LOCAL_BASE_URL`, `LOCAL_API_KEY`)
+> are gone. Setting any of them is a startup error with a migration message
+> rather than a silent fallback to a hardcoded hosted endpoint.
 
 Then:
 
