@@ -13,7 +13,8 @@ export interface TraceStep {
   write?: boolean;
 }
 
-export type TraceOutcome = "success" | "partial" | "failed";
+/** "rolled_back" = the run failed but the bundle was fully restored. */
+export type TraceOutcome = "success" | "rolled_back" | "partial" | "failed";
 
 export interface QueryTrace {
   id: string;
@@ -95,6 +96,8 @@ function outcomeMarker(outcome: TraceOutcome): string {
   switch (outcome) {
     case "success":
       return "✓";
+    case "rolled_back":
+      return "↩ rolled back";
     case "partial":
       return "⚠ partial";
     case "failed":
