@@ -26,6 +26,8 @@ services:
       LLM_FALLBACK_ALLOW_FOR: ${LLM_FALLBACK_ALLOW_FOR:-query}
       GIT_AUTOCOMMIT: ${GIT_AUTOCOMMIT:-true}
       MUTATION_ROLLBACK: ${MUTATION_ROLLBACK:-true}
+      DREAM_INTERVAL: ${DREAM_INTERVAL:-6h}
+      DREAM_SIGNALS: ${DREAM_SIGNALS:-}
     healthcheck:
       test:
         - CMD
