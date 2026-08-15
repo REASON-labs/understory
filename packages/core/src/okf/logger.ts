@@ -49,7 +49,8 @@ export async function appendLog(
       }
     }
   }
-  await fs.writeFile(logPath, content, "utf-8");
+  // Through the bundle, not fs, so log appends are rollback-able.
+  await bundle.writeFile(logPath, content);
 }
 
 /** Parse the root log.md into structured entries (best-effort, permissive). */

@@ -1,5 +1,5 @@
 import { generateText, streamText, stepCountIs, type LanguageModel, type ModelMessage } from "ai";
-import type { KnowledgeBase } from "../okf/index.js";
+import type { KnowledgeBase, RollbackReport } from "../okf/index.js";
 import {
   createModel,
   resolveFallbackConfig,
@@ -38,8 +38,37 @@ export interface MutationResult {
 
 export type MutationOutcome =
   | { ok: true; result: MutationResult }
-  | { ok: false; status: "partial"; filesChanged: string[]; error: string; traceId: string }
+  /**
+   * The run failed after writing, and every write was undone. The bundle is
+   * exactly as it was before the instruction. This is the normal failure
+   * mode now that mutations are transactional.
+   */
+  | {
+      ok: false;
+      status: "rolled_back";
+      filesReverted: string[];
+      error: string;
+      traceId: string;
+    }
+  /**
+   * The run failed AND rollback could not fully restore the bundle, or
+   * rollback was disabled via MUTATION_ROLLBACK=false. `filesChanged` are
+   * left on disk. This is the case that needs a human.
+   */
+  | {
+      ok: false;
+      status: "partial";
+      filesChanged: string[];
+      filesUnrestored?: string[];
+      error: string;
+      traceId: string;
+    }
   | { ok: false; status: "failed"; error: string };
+
+/** Rollback is on by default; MUTATION_ROLLBACK=false restores the old behaviour. */
+function rollbackEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MUTATION_ROLLBACK !== "false";
+}
 
 interface ResolvedAgentModel {
   model: LanguageModel;
@@ -140,10 +169,11 @@ export async function runMutation(
   const recorder = new TraceRecorder();
   const filesChanged = new Set<string>();
   let modelChain: string[] = [];
-  try {
+
+  const runAgent = async () => {
     const resolved = await resolveAgentModel(options, "mutate");
     modelChain = resolved.modelChain;
-    const result = await generateText({
+    return generateText({
       model: resolved.model,
       system: buildSystemPrompt(ctx),
       prompt: instruction,
@@ -151,6 +181,12 @@ export async function runMutation(
       stopWhen: stepCountIs(MAX_STEPS),
       temperature: 0.2,
     });
+  };
+
+  try {
+    // The whole agent loop is one transaction: a model that dies at step 7
+    // of 12 must not leave the first six writes behind.
+    const result = rollbackEnabled() ? await kb.transaction(runAgent) : await runAgent();
     const trace = recorder.finalize("mutation", instruction, result.text, "success", modelChain);
     await traceStore(kb).save(trace);
     return {
@@ -165,12 +201,45 @@ export async function runMutation(
   } catch (err) {
     const files = [...filesChanged].sort();
     const message = errorMessage(err);
-    if (files.length > 0) {
-      const summary = `Partial mutation: ${files.length} file(s) changed before failure. Error: ${message}`;
+    const rollback = (err as Error & { rollback?: RollbackReport }).rollback;
+
+    // Key off the journal, not the tool-call tracker: `filesChanged` only
+    // counts writes that went through the agent's write tools, while the
+    // journal sees every byte that actually changed on disk (index.md and
+    // log.md regeneration included).
+    const reverted = rollback?.restored ?? [];
+
+    // Clean rollback: the bundle is back to its pre-instruction state.
+    if (rollback && rollback.failed.length === 0 && reverted.length > 0) {
+      const summary = `Mutation failed and was rolled back (${reverted.length} file(s) restored). Error: ${message}`;
+      const trace = recorder.finalize("mutation", instruction, summary, "rolled_back", modelChain);
+      await traceStore(kb).save(trace);
+      return {
+        ok: false,
+        status: "rolled_back",
+        filesReverted: reverted,
+        error: message,
+        traceId: trace.id,
+      };
+    }
+
+    // Writes happened and could not be (fully) undone — the only case that
+    // still needs a human to look at the bundle.
+    if (files.length > 0 || (rollback?.failed.length ?? 0) > 0) {
+      const unrestored = rollback?.failed ?? files;
+      const summary = `Partial mutation: ${unrestored.length} file(s) left changed after a failed rollback. Error: ${message}`;
       const trace = recorder.finalize("mutation", instruction, summary, "partial", modelChain);
       await traceStore(kb).save(trace);
-      return { ok: false, status: "partial", filesChanged: files, error: message, traceId: trace.id };
+      return {
+        ok: false,
+        status: "partial",
+        filesChanged: files,
+        filesUnrestored: unrestored,
+        error: message,
+        traceId: trace.id,
+      };
     }
+
     const trace = recorder.finalize("mutation", instruction, message, "failed", modelChain);
     await traceStore(kb).save(trace);
     return { ok: false, status: "failed", error: message };
