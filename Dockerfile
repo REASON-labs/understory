@@ -22,5 +22,8 @@ COPY --from=build /app/packages/web/dist packages/web/dist
 
 ENV BUNDLE_ROOT=/bundle PORT=3800
 EXPOSE 3800
+# /health is unauthenticated by design so this works with AUTH_TOKEN set.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3800)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 VOLUME /bundle
 CMD ["node", "packages/server/dist/index.js"]
