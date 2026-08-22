@@ -44,11 +44,29 @@ try {
   process.exit(1);
 }
 
-// Reflect the request origin; expose Mcp-Session-Id so browser MCP clients can
-// read it back off the initialize response.
+// CORS origin policy. `origin: true` reflected any site's Origin header;
+// combined with optional auth, any page the browser visited could call the
+// memory API cross-origin. Default is now same-origin only (the bundled web UI
+// is served same-origin, so it needs no config). Set CORS_ORIGINS to a comma
+// list to allow specific browser origins, or CORS_ORIGINS=* to restore the old
+// reflect-any behaviour explicitly.
+function resolveCorsOrigin(env: NodeJS.ProcessEnv = process.env): cors.CorsOptions["origin"] {
+  const raw = env.CORS_ORIGINS?.trim();
+  if (!raw) return false;
+  if (raw === "*") return true;
+  const allow = new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+  return (origin, cb) => {
+    // No Origin header = same-origin or a non-browser client (curl, stdio). Allow.
+    if (!origin || allow.has(origin)) return cb(null, true);
+    cb(new Error(`origin ${origin} not allowed by CORS_ORIGINS`));
+  };
+}
+
+// Expose Mcp-Session-Id so browser MCP clients can read it back off the
+// initialize response.
 app.use(
   cors({
-    origin: true,
+    origin: resolveCorsOrigin(),
     exposedHeaders: ["Mcp-Session-Id"],
     allowedHeaders: [
       "Content-Type",
@@ -70,12 +88,23 @@ app.use(healthRouter(kb, bundleRoot));
 // Optional bearer auth (issue #1): protects the memory (/mcp + /api) when
 // AUTH_TOKEN is set. Static web UI stays open and prompts for the token.
 const authToken = process.env.AUTH_TOKEN;
+if (!authToken && process.env.AUTH_REQUIRED === "true") {
+  console.error(
+    "[understory] AUTH_REQUIRED=true but AUTH_TOKEN is unset — refusing to start open."
+  );
+  process.exit(1);
+}
 if (authToken) {
   app.use(["/mcp", "/api"], bearerAuth(authToken));
   console.log("[understory] auth: bearer token required for /mcp and /api");
 } else {
   console.log("[understory] auth: disabled (set AUTH_TOKEN to protect /mcp and /api)");
 }
+console.log(
+  `[understory] cors: ${
+    process.env.CORS_ORIGINS?.trim() || "same-origin only (set CORS_ORIGINS to allow browsers)"
+  }`
+);
 
 app.use("/mcp", mcpRouter(kb));
 app.use("/api", browseRouter(kb));
