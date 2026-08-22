@@ -38,7 +38,7 @@ try {
   }
 } catch (err) {
   console.error(`[understory] LLM configuration error: ${(err as Error).message}`);
-  console.error("[understory] Set LLM_API_BASE_URL + LLM_API_KEY, or configure legacy env vars.");
+  console.error("[understory] Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT + LLM_MODEL.");
   process.exit(1);
 }
 

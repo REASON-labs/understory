@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /**
  * MCP over stdio — register in Claude Code / Claude Desktop:
- *   claude mcp add okf-kb -e BUNDLE_ROOT=/path/to/bundle -e OPENROUTER_API_KEY=... \
- *     -e LLM_PROVIDER=openrouter -- node <repo>/packages/server/dist/mcp/stdio.js
+ *   claude mcp add ustory -e BUNDLE_ROOT=/path/to/bundle \
+ *     -e LLM_API_BASE_URL=http://localhost:8080/v1 -e LLM_API_KEY=... \
+ *     -e LLM_API_FORMAT=openai -e LLM_MODEL=... \
+ *     -- node <repo>/packages/server/dist/mcp/stdio.js
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { KnowledgeBase, resolveFallbackConfig, resolveModelConfig } from "@understory/core";
@@ -30,7 +32,7 @@ try {
   }
 } catch (err) {
   console.error(`[understory] LLM configuration error: ${(err as Error).message}`);
-  console.error("[understory] Set LLM_API_BASE_URL + LLM_API_KEY, or configure legacy env vars.");
+  console.error("[understory] Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT + LLM_MODEL.");
   process.exit(1);
 }
 

@@ -37,7 +37,7 @@ console.log(
 const status = await client.callTool({ name: "memory_status", arguments: {} });
 console.log("STATUS:", (status.content as { text: string }[])[0].text);
 
-if (process.env.OPENROUTER_API_KEY) {
+if (process.env.LLM_API_BASE_URL) {
   const q = await client.callTool({
     name: "memory_query",
     arguments: { question: "What is the billing API rate limit?" },
