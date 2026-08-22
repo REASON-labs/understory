@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { KnowledgeBase } from "../okf/index.js";
+import { inDirectory, type KnowledgeBase } from "../okf/index.js";
 import type { TreeNode } from "../okf/types.js";
 import type { TraceRecorder } from "./trace.js";
 import { recordHotDelete, recordHotWrite } from "./hot-memory.js";
@@ -27,23 +27,68 @@ const logSummary = z
     "One past-tense sentence for the update log, with bundle-relative links, e.g. 'Added [Billing API](/apis/billing-api.md).'"
   );
 
-export function buildReadTools(kb: KnowledgeBase, trace?: TraceRecorder) {
+/**
+ * Caller-imposed limits on what a query may look at. Supplied by the MCP
+ * client through memory_query, NOT chosen by the model — the model cannot
+ * widen them.
+ */
+export interface QueryScope {
+  type?: string;
+  tags?: string[];
+  directory?: string;
+}
+
+/**
+ * Merge the model's per-call search arguments with the caller's scope.
+ *
+ * The caller wins on type and directory, and tags are unioned (all must
+ * match). A scope is a guarantee made to the client, so the model must not be
+ * able to widen it — only narrow it further.
+ */
+function applyScope(
+  modelArgs: { type?: string; tags?: string[] },
+  scope: QueryScope | undefined
+): { type?: string; tags?: string[]; directory?: string } {
+  if (!scope) return modelArgs;
+  return {
+    type: scope.type ?? modelArgs.type,
+    tags: [...new Set([...(scope.tags ?? []), ...(modelArgs.tags ?? [])])],
+    directory: scope.directory,
+  };
+}
+
+function describeScope(scope: QueryScope | undefined): string {
+  if (!scope) return "";
+  const parts = [
+    scope.type ? `type "${scope.type}"` : null,
+    scope.tags?.length ? `tags [${scope.tags.join(", ")}]` : null,
+    scope.directory ? `directory ${scope.directory}` : null,
+  ].filter(Boolean);
+  if (parts.length === 0) return "";
+  return ` SCOPED: this query is restricted to ${parts.join(" and ")}; results outside that scope are not available to you and you cannot widen it.`;
+}
+
+export function buildReadTools(kb: KnowledgeBase, trace?: TraceRecorder, scope?: QueryScope) {
   return {
     search_knowledge: tool({
       description:
-        "Search the knowledge base by keywords, optionally filtered by concept type and/or tags. Returns ranked hits with paths and snippets. NOTE: matching is keyword-based, not semantic — a miss does NOT mean the knowledge is absent; it may be worded differently.",
+        "Search the knowledge base by keywords, optionally filtered by concept type and/or tags. Returns ranked hits with paths and snippets. NOTE: matching is keyword-based, not semantic — a miss does NOT mean the knowledge is absent; it may be worded differently." +
+        describeScope(scope),
       inputSchema: z.object({
         query: z.string().describe("Keywords to search for. May be empty when filtering by type/tags only."),
         type: z.string().optional().describe("Exact concept type filter"),
         tags: z.array(z.string()).optional().describe("Require ALL of these tags"),
       }),
       execute: async ({ query, type, tags }) => {
-        const hits = await kb.search(query, { type, tags });
+        const options = applyScope({ type, tags }, scope);
+        const hits = await kb.search(query, options);
         trace?.record("search_knowledge", query, hits.map((h) => h.path));
         if (hits.length > 0) return hits;
         // Keyword miss ≠ knowledge absent. Put the map in the tool result so
         // the model's next step is to read plausible concepts, not give up.
-        const tree = formatTree(await kb.listTree());
+        // Scoped to the caller's directory: dumping the whole bundle here
+        // would both leak out-of-scope structure and bloat the context.
+        const tree = formatTree(await kb.listTree(scope?.directory));
         return {
           hits: [],
           notice:
@@ -53,21 +98,34 @@ export function buildReadTools(kb: KnowledgeBase, trace?: TraceRecorder) {
       },
     }),
     read_concept: tool({
-      description: "Read one concept document in full: frontmatter and markdown body.",
+      description:
+        "Read one concept document in full: frontmatter and markdown body." + describeScope(scope),
       inputSchema: z.object({ path: conceptPath }),
       execute: async ({ path }) => {
         const c = await kb.readConcept(path);
+        // Enforce the directory scope on reads too. Search and list_directory
+        // are already scoped so the model shouldn't know out-of-scope paths,
+        // but the tool description promises they're unavailable — leaving
+        // read open would make that promise false. (This is a retrieval
+        // boundary for answer quality, not a security boundary; AUTH_TOKEN is
+        // the security boundary.)
+        if (!inDirectory(c.path, scope?.directory)) {
+          return {
+            error: `Out of scope: this query is restricted to ${scope!.directory}, and ${c.path} is outside it.`,
+          };
+        }
         trace?.record("read_concept", c.path, [c.path]);
         return { path: c.path, frontmatter: c.frontmatter, body: c.body };
       },
     }),
     list_directory: tool({
       description:
-        "List the bundle's directory tree with concept types/titles/descriptions. Use to understand structure and decide where new concepts belong.",
+        "List the bundle's directory tree with concept types/titles/descriptions. Use to understand structure and decide where new concepts belong." +
+        describeScope(scope),
       inputSchema: z.object({}),
       execute: async () => {
         trace?.record("list_directory", "", []);
-        return formatTree(await kb.listTree());
+        return formatTree(await kb.listTree(scope?.directory));
       },
     }),
     lint_knowledge: tool({

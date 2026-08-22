@@ -1,4 +1,4 @@
-import type { KnowledgeBase } from "../okf/index.js";
+import { inDirectory, matchesFilters, type KnowledgeBase } from "../okf/index.js";
 import { parseDuration } from "../util/duration.js";
 import type { AgentOptions } from "./agent.js";
 
@@ -12,6 +12,13 @@ import type { AgentOptions } from "./agent.js";
  * - Hot concepts are stored as PATHS and read fresh at lookup — never stale.
  * - Hot Q&A pairs are purged on any write (the write may contradict them).
  * - Everything expires after HOT_MEMORY_TTL (default 1h).
+ *
+ * Scope rules (see options.scope):
+ * - Hot concepts are filtered by the SAME predicate the search scan uses.
+ * - Hot Q&A pairs are skipped entirely for a scoped query. A cached answer
+ *   carries no record of which concepts produced it, so there is no way to
+ *   show it respected the scope. Answering from it would silently break the
+ *   guarantee the caller asked for.
  */
 
 interface HotQA {
@@ -82,13 +89,16 @@ export async function hotLookup(
   const ttl = parseDuration(process.env.HOT_MEMORY_TTL) ?? DEFAULT_TTL_MS;
   const cutoff = Date.now() - ttl;
 
+  const scope = options.scope;
   const sections: string[] = [];
 
   for (const [path, touchedAt] of hotConcepts) {
     if (touchedAt < cutoff) continue;
+    if (!inDirectory(path, scope?.directory)) continue;
     try {
       const c = await kb.readConcept(path); // fresh read — never stale
       const fm = c.frontmatter;
+      if (scope && !matchesFilters(fm, scope)) continue;
       sections.push(
         `CONCEPT ${c.path}${fm.title ? ` — ${fm.title}` : ""}${fm.description ? ` (${fm.description})` : ""}\n` +
           c.body.slice(0, MAX_EXCERPT_CHARS)
@@ -97,9 +107,12 @@ export async function hotLookup(
       hotConcepts.delete(path); // deleted behind our back
     }
   }
-  for (const qa of hotQAs) {
-    if (qa.at < cutoff) continue;
-    sections.push(`PREVIOUS Q&A\nQ: ${qa.question}\nA: ${qa.answer}`);
+  // Scoped queries skip cached Q&A entirely — see the scope rules above.
+  if (!scope) {
+    for (const qa of hotQAs) {
+      if (qa.at < cutoff) continue;
+      sections.push(`PREVIOUS Q&A\nQ: ${qa.question}\nA: ${qa.answer}`);
+    }
   }
 
   if (sections.length === 0) return null;

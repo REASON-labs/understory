@@ -218,6 +218,35 @@ Memory is a graph, not a pile of notes, and graphs rot: concepts go **orphaned**
 - **Write-time linking** — new knowledge either enriches the concept it belongs to (an attribute of an existing entity is patched in, not filed separately) or, when it's a distinct entity, is created *and* back-linked from related concepts. Contradictions are superseded in place, never left standing alongside the old value.
 - **`memory_maintain`** — a deterministic lint (orphans + broken links, surfaced in `memory_status` under `graph`) drives an internal agent to wire orphans into related concepts and fix dangling links. Run it periodically to counter drift; it's a no-op when the graph is already healthy.
 
+### Scoped queries
+
+`memory_query` accepts optional filters alongside the question:
+
+```jsonc
+{
+  "question": "what are the rate limits?",
+  "type": "policy",          // exact concept type
+  "tags": ["billing"],       // ALL must match
+  "directory": "/services"   // restrict to a subtree
+}
+```
+
+The internal agent's `search_knowledge` tool has always had `type`/`tags`
+filters, but they were reachable only by the inner agent's own choice — an
+external client could ask for precision and not get it. These now pass through.
+
+A scope is a **guarantee to the caller, not a suggestion to the model**: the
+model can narrow it further but cannot widen it, and `read_concept` refuses
+paths outside a `directory` scope. (This is a retrieval boundary for answer
+quality, not a security boundary — `AUTH_TOKEN` is the security boundary.)
+
+`directory` also shrinks the bundle tree injected into the system prompt and
+into search-miss results, so a scoped query is cheaper as well as more precise.
+
+Scopes are part of the query cache key, and scoped queries skip cached Q&A
+pairs in hot memory — a cached answer carries no record of which concepts
+produced it, so it can't be shown to respect the scope.
+
 ### Health check
 
 `GET /health` — unauthenticated, cheap, safe to poll. Returns `200 {status:"ok"}`

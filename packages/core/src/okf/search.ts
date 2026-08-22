@@ -1,10 +1,52 @@
 import type { Bundle } from "./bundle.js";
-import type { SearchHit } from "./types.js";
+import type { ConceptFrontmatter, SearchHit } from "./types.js";
 
 export interface SearchOptions {
   type?: string;
   tags?: string[];
   limit?: number;
+  /**
+   * Restrict the search to one directory subtree (bundle-relative, e.g.
+   * "/services"). Narrows the scan itself rather than filtering after the
+   * fact, so a scoped search is cheaper as well as more precise.
+   */
+  directory?: string;
+}
+
+/**
+ * Does a concept satisfy the type/tags filters?
+ *
+ * Extracted so hot memory can apply exactly the same predicate as the search
+ * scan. If these two drifted, a scoped query could be answered from hot
+ * memory by a concept the equivalent search would have excluded — a silent
+ * correctness bug, and the reason this lives in one place.
+ *
+ * Directory is not handled here: the scan narrows by directory up front via
+ * listConceptPaths(), and callers filtering a path list check the prefix
+ * themselves with inDirectory().
+ */
+export function matchesFilters(
+  frontmatter: ConceptFrontmatter,
+  options: Pick<SearchOptions, "type" | "tags">
+): boolean {
+  if (options.type && frontmatter.type?.toLowerCase() !== options.type.toLowerCase()) {
+    return false;
+  }
+  if (options.tags?.length) {
+    const conceptTags = (Array.isArray(frontmatter.tags) ? frontmatter.tags : []).map((t) =>
+      String(t).toLowerCase()
+    );
+    if (!options.tags.every((t) => conceptTags.includes(t.toLowerCase()))) return false;
+  }
+  return true;
+}
+
+/** Is a bundle path inside a directory subtree? Both are bundle-relative. */
+export function inDirectory(conceptPath: string, directory: string | undefined): boolean {
+  if (!directory) return true;
+  const dir = ("/" + directory.replace(/^\/+/, "").replace(/\/+$/, "")).toLowerCase();
+  if (dir === "/") return true;
+  return conceptPath.toLowerCase().startsWith(dir + "/");
 }
 
 /**
@@ -20,7 +62,9 @@ export async function searchBundle(
     .toLowerCase()
     .split(/\s+/)
     .filter((t) => t.length > 1);
-  const paths = await bundle.listConceptPaths();
+  // Narrow the scan up front rather than filtering results: a directory-scoped
+  // search reads fewer files, which matters because this is a full scan.
+  const paths = await bundle.listConceptPaths(options.directory ?? "/");
   const hits: SearchHit[] = [];
 
   for (const conceptPath of paths) {
@@ -32,13 +76,7 @@ export async function searchBundle(
     }
     const fm = concept.frontmatter;
 
-    if (options.type && fm.type?.toLowerCase() !== options.type.toLowerCase()) continue;
-    if (options.tags?.length) {
-      const conceptTags = (Array.isArray(fm.tags) ? fm.tags : []).map((t) =>
-        String(t).toLowerCase()
-      );
-      if (!options.tags.every((t) => conceptTags.includes(t.toLowerCase()))) continue;
-    }
+    if (!matchesFilters(fm, options)) continue;
 
     const title = (fm.title ?? "").toString().toLowerCase();
     const description = (fm.description ?? "").toString().toLowerCase();
