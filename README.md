@@ -218,6 +218,26 @@ Memory is a graph, not a pile of notes, and graphs rot: concepts go **orphaned**
 - **Write-time linking** — new knowledge either enriches the concept it belongs to (an attribute of an existing entity is patched in, not filed separately) or, when it's a distinct entity, is created *and* back-linked from related concepts. Contradictions are superseded in place, never left standing alongside the old value.
 - **`memory_maintain`** — a deterministic lint (orphans + broken links, surfaced in `memory_status` under `graph`) drives an internal agent to wire orphans into related concepts and fix dangling links. Run it periodically to counter drift; it's a no-op when the graph is already healthy.
 
+### Health check
+
+`GET /health` — unauthenticated, cheap, safe to poll. Returns `200 {status:"ok"}`
+when the bundle root is reachable and `503 {status:"degraded"}` when it isn't,
+plus uptime and the resolved model labels:
+
+```json
+{
+  "status": "ok",
+  "uptimeSeconds": 412,
+  "bundle": { "root": "/bundle", "reachable": true },
+  "model": { "primary": "openai:qwen3-30b", "fallback": "openai:deepseek-chat" }
+}
+```
+
+It is mounted *before* the bearer-auth middleware on purpose — a container
+`HEALTHCHECK` has no way to carry `AUTH_TOKEN`. Model **base URLs are omitted**
+so an exposed instance doesn't leak internal hostnames. Docker Compose and the
+Dockerfile both wire this up automatically.
+
 This design mirrors the pattern in Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (index.md + log.md, create-vs-enrich, lint for orphans). Deferred from that pattern until scale warrants: an explicit page-type schema, and hybrid FTS5+embedding search (the naive scan in `search.ts` is fine into the low thousands of concepts).
 
 ## Tests

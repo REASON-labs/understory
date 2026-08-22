@@ -7,6 +7,7 @@ import { KnowledgeBase, resolveFallbackConfig, resolveModelConfig } from "@under
 import { mcpRouter } from "./mcp/http.js";
 import { browseRouter } from "./api/browse.js";
 import { chatRouter } from "./api/chat.js";
+import { healthRouter } from "./api/health.js";
 import { bearerAuth } from "./auth.js";
 import { startDreamer } from "./dreamer.js";
 
@@ -60,6 +61,10 @@ app.use(
   })
 );
 app.use(express.json({ limit: "4mb" }));
+
+// Mounted before bearerAuth on purpose: container healthchecks can't carry a
+// token, and /health exposes nothing sensitive (no baseURLs, no concepts).
+app.use(healthRouter(kb, bundleRoot));
 
 // Optional bearer auth (issue #1): protects the memory (/mcp + /api) when
 // AUTH_TOKEN is set. Static web UI stays open and prompts for the token.
