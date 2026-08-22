@@ -1,0 +1,18 @@
+{
+  "description": "Recall gold set for the fixture bundle. `category` splits queries the keyword scorer should nail (exact) from ones it structurally can't (paraphrase — the target's literal terms are absent), which is where embedding retrieval earns its keep. `expected` paths are bundle-relative, matching what kb.search() returns.",
+  "queries": [
+    { "query": "login service", "category": "exact", "expected": ["/auth/login-service.md"] },
+    { "query": "billing api", "category": "exact", "expected": ["/billing/billing-api.md"] },
+    { "query": "database restore", "category": "exact", "expected": ["/ops/db-restore.md"] },
+    { "query": "rate limiting", "category": "exact", "expected": ["/api/rate-limiting.md"] },
+    { "query": "data retention policy", "category": "exact", "expected": ["/policy/data-retention.md"] },
+    { "query": "platform team", "category": "exact", "expected": ["/teams/platform-team.md"] },
+
+    { "query": "how do users authenticate", "category": "paraphrase", "expected": ["/auth/login-service.md"] },
+    { "query": "how do we collect money from customers", "category": "paraphrase", "expected": ["/billing/billing-api.md"] },
+    { "query": "get the system of record working again after it breaks", "category": "paraphrase", "expected": ["/ops/db-restore.md"] },
+    { "query": "who owns k8s", "category": "paraphrase", "expected": ["/teams/platform-team.md"] },
+    { "query": "what are our uptime and reliability goals", "category": "paraphrase", "expected": ["/policy/slo-definitions.md"] },
+    { "query": "where do we keep short-lived working state", "category": "paraphrase", "expected": ["/data/redis-cache.md"] }
+  ]
+}
