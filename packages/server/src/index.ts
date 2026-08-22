@@ -8,6 +8,7 @@ import { mcpRouter } from "./mcp/http.js";
 import { browseRouter } from "./api/browse.js";
 import { chatRouter } from "./api/chat.js";
 import { healthRouter } from "./api/health.js";
+import { dreamRouter } from "./api/dream.js";
 import { bearerAuth } from "./auth.js";
 import { startDreamer } from "./dreamer.js";
 
@@ -79,6 +80,7 @@ if (authToken) {
 app.use("/mcp", mcpRouter(kb));
 app.use("/api", browseRouter(kb));
 app.use("/api", chatRouter(kb));
+app.use("/api", dreamRouter(kb));
 
 // Serve the built web UI in production (single container), with SPA fallback.
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");

@@ -247,6 +247,66 @@ Scopes are part of the query cache key, and scoped queries skip cached Q&A
 pairs in hot memory — a cached answer carries no record of which concepts
 produced it, so it can't be shown to respect the scope.
 
+### Dreaming (autonomous consolidation)
+
+Set `DREAM_INTERVAL` (e.g. `6h`) and understory runs a consolidation pass on a
+timer. Deterministic signals decide whether there is anything to do, so a
+healthy memory costs nothing — no signals, no agent run, no tokens. The first
+run is one interval after boot, never at startup, and runs never overlap.
+Minimum interval is 5 minutes.
+
+**Signals**, controlled by `DREAM_SIGNALS`:
+
+| Signal | Fires when | The dream then |
+|---|---|---|
+| `orphans` | nothing links to a concept | wires it into related concepts, or leaves it alone |
+| `links` | a link target is missing | fixes the path, or removes the link |
+| `oversized` | a concept has grown fat | splits it hub-and-spoke, original path preserved |
+| `insights` | ≥5 recent log entries | may create one overview concept over an emergent theme |
+| `duplicates` | two concepts look near-identical | merges them and **deletes** one |
+
+Default is everything **except `duplicates`**. That signal is the only one that
+deletes, and it fires on title/description string similarity — the measure most
+likely to be wrong. Mutations are transactional and git-committed, so a bad
+merge is revertible, but only if you notice. Enable with `DREAM_SIGNALS=all`
+once the other signals look right on your bundle.
+
+An unknown value in `DREAM_SIGNALS` is a startup error, not a silent
+narrowing — a typo there is otherwise invisible until you wonder why nothing
+is being consolidated.
+
+#### Watching it
+
+Dreaming is the one part of understory that writes with nobody watching, hours
+apart. Two endpoints exist to make that observable (both under `/api`, so
+`AUTH_TOKEN` protects them):
+
+```bash
+# What would a dream do right now? No agent, no tokens, no writes.
+curl localhost:3800/api/dream/preview
+
+# Is it running, on what schedule, and how did recent runs go?
+curl localhost:3800/api/dream/status
+```
+
+`preview` returns the signals that fired with their counts and the exact
+prompt text each contributes, plus anything suppressed by `DREAM_SIGNALS` —
+so you can see what turning `duplicates` on would pick up before turning it on.
+
+`status` returns the resolved schedule and signal set, the next run time, and
+the last 20 runs with outcome, duration, and files changed. History is
+in-memory and resets with the process, by design: it describes this process's
+behaviour, and a stale history read off disk after a restart would mislead.
+
+A dream that fails is logged to stderr, and its outcome is recorded — including
+`rolled_back`, which means it failed and the bundle was fully restored. That is
+a materially different event from `partial`, which means rollback itself failed
+and a human needs to look.
+
+**Note:** a dream holds the exclusive bundle write lock for its whole run, so
+user mutations queue behind it. At a 6h interval on a personal bundle this is
+invisible; if you shorten the interval a lot, it stops being.
+
 ### Health check
 
 `GET /health` — unauthenticated, cheap, safe to poll. Returns `200 {status:"ok"}`
