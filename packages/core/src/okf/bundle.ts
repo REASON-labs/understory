@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parseDoc, serializeDoc, hasNonEmptyType } from "./frontmatter.js";
+import type { Journal } from "./journal.js";
 import { RESERVED_FILENAMES } from "./types.js";
 import type { Concept, ConceptFrontmatter, TreeNode } from "./types.js";
 
@@ -25,9 +26,72 @@ export class BundleError extends Error {
  */
 export class Bundle {
   readonly root: string;
+  /**
+   * When a transaction is open, every write/delete below captures the file's
+   * pre-image here first. Set by KnowledgeBase; nothing else should touch it.
+   */
+  private journal: Journal | null = null;
 
   constructor(root: string) {
     this.root = path.resolve(root);
+  }
+
+  /** @internal — transaction plumbing, see KnowledgeBase.transaction(). */
+  setJournal(journal: Journal | null): void {
+    this.journal = journal;
+  }
+
+  /**
+   * Capture the current contents of a path before it is modified. Must be
+   * called before *every* mutating fs operation in this class — a write that
+   * skips it is a write that cannot be rolled back.
+   */
+  private async capture(bundlePath: string): Promise<void> {
+    const journal = this.journal;
+    if (!journal) return;
+    const canonical = this.toBundlePath(bundlePath);
+    if (journal.has(canonical)) return;
+    try {
+      journal.record(canonical, await fs.readFile(this.resolve(canonical), "utf-8"));
+    } catch {
+      // Missing file: pre-image is "did not exist", so rollback deletes it.
+      journal.record(canonical, null);
+    }
+  }
+
+  /**
+   * Raw file write that participates in the journal. Used by the index and
+   * log generators, which write reserved filenames the concept API forbids.
+   */
+  async writeFile(bundlePath: string, contents: string): Promise<void> {
+    const abs = this.resolve(bundlePath);
+    await this.capture(bundlePath);
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, contents, "utf-8");
+  }
+
+  /**
+   * Restore captured pre-images, newest transaction state discarded.
+   * Returns the paths that could not be restored — the caller must surface
+   * these loudly, since a failed rollback is the one case where the bundle
+   * is left in a state nobody has recorded.
+   */
+  async restore(entries: { path: string; contents: string | null }[]): Promise<string[]> {
+    const failed: string[] = [];
+    for (const entry of entries) {
+      try {
+        const abs = this.resolve(entry.path);
+        if (entry.contents === null) {
+          await fs.rm(abs, { force: true });
+        } else {
+          await fs.mkdir(path.dirname(abs), { recursive: true });
+          await fs.writeFile(abs, entry.contents, "utf-8");
+        }
+      } catch {
+        failed.push(entry.path);
+      }
+    }
+    return failed;
   }
 
   /** Resolve a bundle-relative path to an absolute one, rejecting escapes. */
@@ -116,6 +180,7 @@ export class Bundle {
       timestamp: new Date().toISOString(),
     };
     const abs = this.resolve(canonical);
+    await this.capture(canonical);
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await fs.writeFile(abs, serializeDoc(stamped, body), "utf-8");
     return { path: canonical, frontmatter: stamped, body, raw: serializeDoc(stamped, body) };
@@ -152,6 +217,7 @@ export class Bundle {
     const canonical = this.toBundlePath(bundlePath);
     this.assertConceptPath(canonical);
     const abs = this.resolve(canonical);
+    await this.capture(canonical);
     try {
       await fs.unlink(abs);
     } catch {
