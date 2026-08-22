@@ -11,7 +11,39 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import { buildReadTools, buildWriteTools, formatTree, type QueryScope } from "./tools.js";
 import { TraceRecorder, TraceStore } from "./trace.js";
 
-const MAX_STEPS = 12;
+const DEFAULT_MAX_STEPS = 12;
+
+/**
+ * Per-run step cap. A small local model that wanders can hit this; when it does,
+ * generateText/streamText just *return* what they have — no throw — so a
+ * truncated run was indistinguishable from a real completion (and, for a
+ * mutation, its partial writes committed as "success"). Configurable via
+ * AGENT_MAX_STEPS, or per-call via AgentOptions.maxSteps (the dreamer passes a
+ * higher cap so a long consolidation isn't clipped at the interactive default).
+ */
+function resolveMaxSteps(
+  options: AgentOptions = {},
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  if (typeof options.maxSteps === "number" && options.maxSteps > 0) {
+    return Math.floor(options.maxSteps);
+  }
+  const parsed = env.AGENT_MAX_STEPS ? Number(env.AGENT_MAX_STEPS) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_STEPS;
+}
+
+/**
+ * Distinguish a step-limit stop from the model choosing to finish. The AI SDK
+ * reports finishReason on the aggregate result; when stopWhen fires the model
+ * was mid-thought, so finishReason is anything but "stop" and the whole step
+ * budget was spent.
+ */
+function wasTruncated(
+  result: { steps: readonly unknown[]; finishReason?: string },
+  maxSteps: number
+): boolean {
+  return result.steps.length >= maxSteps && result.finishReason !== "stop";
+}
 
 export interface AgentOptions {
   model?: string;
@@ -27,12 +59,20 @@ export interface AgentOptions {
    * letting it keep spending tokens on a stream nobody is reading.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Per-run step cap override. Falls back to AGENT_MAX_STEPS, then 12. The
+   * dreamer sets this higher so a long consolidation isn't clipped at the
+   * interactive default.
+   */
+  maxSteps?: number;
 }
 
 export interface QueryResult {
   answer: string;
   steps: number;
   traceId: string;
+  /** True if the run hit the step cap rather than the model finishing. */
+  truncated: boolean;
 }
 
 export interface MutationResult {
@@ -40,6 +80,12 @@ export interface MutationResult {
   filesChanged: string[];
   steps: number;
   traceId: string;
+  /**
+   * True if the run hit the step cap rather than the model finishing. The
+   * writes still committed (a step-limit stop doesn't throw, so the transaction
+   * saw success) — this flags that the edit may be half-formed.
+   */
+  truncated: boolean;
 }
 
 export type MutationOutcome =
@@ -155,16 +201,24 @@ export async function runQuery(
   try {
     const resolved = await resolveAgentModel(options, "query");
     modelChain = resolved.modelChain;
+    const maxSteps = resolveMaxSteps(options);
     const result = await generateText({
       model: resolved.model,
       system: buildSystemPrompt(ctx),
       prompt: question,
       tools: buildReadTools(kb, recorder, options.scope),
-      stopWhen: stepCountIs(MAX_STEPS),
+      stopWhen: stepCountIs(maxSteps),
     });
-    const trace = recorder.finalize("query", question, result.text, "success", modelChain);
+    const truncated = wasTruncated(result, maxSteps);
+    const trace = recorder.finalize(
+      "query",
+      question,
+      result.text,
+      truncated ? "truncated" : "success",
+      modelChain
+    );
     await traceStore(kb).save(trace);
-    return { answer: result.text, steps: result.steps.length, traceId: trace.id };
+    return { answer: result.text, steps: result.steps.length, traceId: trace.id, truncated };
   } catch (err) {
     const trace = recorder.finalize("query", question, errorMessage(err), "failed", modelChain);
     await traceStore(kb).save(trace);
@@ -182,6 +236,7 @@ export async function runMutation(
   const recorder = new TraceRecorder();
   const filesChanged = new Set<string>();
   let modelChain: string[] = [];
+  const maxSteps = resolveMaxSteps(options);
 
   const runAgent = async () => {
     const resolved = await resolveAgentModel(options, "mutate");
@@ -191,7 +246,7 @@ export async function runMutation(
       system: buildSystemPrompt(ctx),
       prompt: instruction,
       tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
-      stopWhen: stepCountIs(MAX_STEPS),
+      stopWhen: stepCountIs(maxSteps),
       temperature: 0.2,
     });
   };
@@ -200,7 +255,19 @@ export async function runMutation(
     // The whole agent loop is one transaction: a model that dies at step 7
     // of 12 must not leave the first six writes behind.
     const result = rollbackEnabled() ? await kb.transaction(runAgent) : await runAgent();
-    const trace = recorder.finalize("mutation", instruction, result.text, "success", modelChain);
+    // A step-limit stop doesn't throw, so its partial writes commit like any
+    // success. We can only tell truncation from completion by the step budget —
+    // record it distinctly so a clipped mutation is visible in the trace
+    // instead of masquerading as a clean run. (Whether to *roll back* on
+    // truncation is a later decision; here we surface, not discard.)
+    const truncated = wasTruncated(result, maxSteps);
+    const trace = recorder.finalize(
+      "mutation",
+      instruction,
+      result.text,
+      truncated ? "truncated" : "success",
+      modelChain
+    );
     await traceStore(kb).save(trace);
     return {
       ok: true,
@@ -209,6 +276,7 @@ export async function runMutation(
         filesChanged: [...filesChanged].sort(),
         steps: result.steps.length,
         traceId: trace.id,
+        truncated,
       },
     };
   } catch (err) {
@@ -282,17 +350,20 @@ export async function streamChat(
   try {
     const resolved = await resolveAgentModel(options, "chat");
     modelChain = resolved.modelChain;
+    const maxSteps = resolveMaxSteps(options);
     const result = streamText({
       model: resolved.model,
       system: buildSystemPrompt(ctx),
       messages,
       tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
-      stopWhen: stepCountIs(MAX_STEPS),
+      stopWhen: stepCountIs(maxSteps),
       abortSignal: options.abortSignal,
-      onFinish: async ({ text }) => {
+      onFinish: async ({ text, finishReason, steps }) => {
         // Persist only turns that actually touched the bundle.
         if (recorder.steps.length > 0) {
-          await traceStore(kb).save(recorder.finalize("chat", input, text, "success", modelChain));
+          const outcome =
+            steps.length >= maxSteps && finishReason !== "stop" ? "truncated" : "success";
+          await traceStore(kb).save(recorder.finalize("chat", input, text, outcome, modelChain));
         }
       },
       // Mid-stream failures never reach the caller's try/catch — streamText

@@ -86,7 +86,7 @@ export async function runQueryCached(
   // cache so identical repeats become instant.
   const hotAnswer = await hot(kb, question, options);
   if (hotAnswer !== null) {
-    const result: QueryResult = { answer: hotAnswer, steps: 0, traceId: "" };
+    const result: QueryResult = { answer: hotAnswer, steps: 0, traceId: "", truncated: false };
     store(key, result, ttl);
     return { ...result, cached: false, source: "hot" };
   }
