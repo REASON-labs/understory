@@ -2,13 +2,14 @@
   "name": "understory",
   "version": "0.1.0",
   "private": true,
-  "description": "LLM-managed knowledge base following the OKF spec — MCP server + web UI",
+  "description": "LLM-managed knowledge base following the OKF spec \u2014 MCP server + web UI",
   "scripts": {
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "dev": "pnpm --parallel -r dev",
     "agent:query": "pnpm --filter @understory/core agent:query",
-    "agent:mutate": "pnpm --filter @understory/core agent:mutate"
+    "agent:mutate": "pnpm --filter @understory/core agent:mutate",
+    "bench:recall": "pnpm --filter @understory/server exec tsx ../../bench/recall/run.ts"
   },
   "engines": {
     "node": ">=20"
