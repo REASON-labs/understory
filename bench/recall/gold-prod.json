@@ -1,0 +1,18 @@
+{
+  "description": "Recall gold set for the production sample-bundle. `category` splits queries the keyword scorer should nail (exact) from ones it structurally can't (paraphrase — the target's literal terms are absent), which is where embedding retrieval earns its keep. `expected` paths are bundle-relative, matching what kb.search() returns.",
+  "queries": [
+    { "query": "billing api", "category": "exact", "expected": ["/apis/billing-api.md"] },
+    { "query": "customer table", "category": "exact", "expected": ["/tables/customers.md"] },
+    { "query": "on-call billing", "category": "exact", "expected": ["/playbooks/oncall-billing.md"] },
+    { "query": "merch store pipeline", "category": "exact", "expected": ["/devops/merch-store.md"] },
+    { "query": "understory service", "category": "exact", "expected": ["/services/understory.md"] },
+    { "query": "print design skill", "category": "exact", "expected": ["/devops/merch-design-skill.md"] },
+
+    { "query": "what to do when charges fail", "category": "paraphrase", "expected": ["/playbooks/oncall-billing.md"] },
+    { "query": "how do we create customer charges", "category": "paraphrase", "expected": ["/apis/billing-api.md"] },
+    { "query": "where are customer records stored", "category": "paraphrase", "expected": ["/tables/customers.md"] },
+    { "query": "merch print pipeline", "category": "paraphrase", "expected": ["/devops/merch-store.md"] },
+    { "query": "ai agent port configuration", "category": "paraphrase", "expected": ["/services/understory.md"] },
+    { "query": "t-shirt design pipeline", "category": "paraphrase", "expected": ["/devops/merch-store-skill.md"] }
+  ]
+}
