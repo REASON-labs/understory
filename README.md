@@ -338,30 +338,24 @@ Dockerfile both wire this up automatically.
 
 ### Mutation safety
 
-Mutations are **all-or-nothing**. Every write in an agent run — concepts,
-regenerated `index.md`, appended `log.md` — is journalled, and if the run fails
-partway the bundle is restored to exactly its pre-instruction state. Upstream, a
-model that died at step 7 of 12 left the first six writes behind permanently
-with no rollback; that was the largest reliability gap when driving the agent
-with a small local model.
+Mutations are **all-or-nothing** via `GIT_AUTOCOMMIT`: every write in an agent
+run — concepts, regenerated `index.md`, appended `log.md` — is committed
+together in a single git commit. If the run fails, the uncommitted changes
+remain in the working tree and can be reverted manually. There is no
+transactional journal or in-memory rollback (upstream dropped `journal.ts`
+in favor of git-based safety).
 
 Outcomes reported by `memory_add` / `memory_update`:
 
 | Status | Meaning |
 |---|---|
 | `ok` | Run completed; writes kept. |
-| `rolled_back` | Run failed; **every** write undone. Bundle unchanged. |
-| `partial` | Run failed *and* rollback couldn't fully restore. Needs a human — `filesUnrestored` lists what's inconsistent. |
 | `failed` | Run failed before writing anything. |
 
-A transaction holds an exclusive bundle write lock for its duration, so a
-background dream consolidation can't interleave with a user mutation — without
-that, rolling back a failed run could silently revert the other one's work.
-
-`GIT_AUTOCOMMIT` now defaults to **true**: rollback handles runs that fail,
-git handles runs that "succeed" but write something wrong. A rollback with git
-enabled lands as a `revert:` commit rather than a dirty working tree.
-`MUTATION_ROLLBACK=false` restores upstream behaviour.
+`GIT_AUTOCOMMIT` defaults to **true**: git handles runs that "succeed" but
+write something wrong — the commit is a clean point to revert. A failed run
+leaves the working tree dirty so the agent's partial output is visible for
+debugging.
 
 This design mirrors the pattern in Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (index.md + log.md, create-vs-enrich, lint for orphans). Deferred from that pattern until scale warrants: an explicit page-type schema, and hybrid FTS5+embedding search (the naive scan in `search.ts` is fine into the low thousands of concepts).
 
