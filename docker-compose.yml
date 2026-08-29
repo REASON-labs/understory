@@ -23,18 +23,13 @@ services:
       LLM_FALLBACK_API_FORMAT: ${LLM_FALLBACK_API_FORMAT:-openai}
       LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-}
       LLM_FALLBACK_ALLOW_FOR: ${LLM_FALLBACK_ALLOW_FOR:-query}
+      # Legacy compat (still supported)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      LLAMACPP_BASE_URL: ${LLAMACPP_BASE_URL:-}
+      LLAMACPP_API_KEY: ${LLAMACPP_API_KEY:-}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
+      LOCAL_API_KEY: ${LOCAL_API_KEY:-}
       GIT_AUTOCOMMIT: ${GIT_AUTOCOMMIT:-true}
-      MUTATION_ROLLBACK: ${MUTATION_ROLLBACK:-true}
-      DREAM_INTERVAL: ${DREAM_INTERVAL:-6h}
-      DREAM_SIGNALS: ${DREAM_SIGNALS:-}
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:3800/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
     restart: unless-stopped
