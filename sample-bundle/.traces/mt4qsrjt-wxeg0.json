@@ -1,0 +1,18 @@
+{
+  "id": "mt4qsrjt-wxeg0",
+  "kind": "query",
+  "input": "What concepts exist in /devops/ related to merch? List them with their paths.",
+  "startedAt": "2026-08-22T18:59:25.499Z",
+  "durationMs": 9150,
+  "steps": [
+    {
+      "seq": 1,
+      "tool": "list_directory",
+      "summary": "",
+      "paths": [],
+      "write": false
+    }
+  ],
+  "answer": "Based on the directory listing, there are two concepts in `/devops/` related to merch:\n\n1. **`/devops/merch-store.md`** — [Playbook — Local print design pipeline at `~/designs/merch/` for creating print-ready PNG files targeting Printful + Quick Stores.]\n2. **`/devops/merch-store-skill.md`** — [Playbook — Procedural skill for creating print-ready merch designs using the merch-store pipeline.]\n\nSources:\n- `/devops/merch-store.md`\n- `/devops/merch-store-skill.md`",
+  "notation": "browse layout → ✓"
+}

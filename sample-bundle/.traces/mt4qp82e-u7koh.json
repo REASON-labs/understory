@@ -1,0 +1,48 @@
+{
+  "id": "mt4qp82e-u7koh",
+  "kind": "mutation",
+  "input": "Persist the following knowledge into the knowledge base. First search for related or owning concepts. If this is an attribute or detail of an existing concept, patch it into that concept rather than creating a new one. Only a distinct stand-alone entity or substantial topic gets its own concept — a…",
+  "startedAt": "2026-08-22T18:55:57.724Z",
+  "durationMs": 51706,
+  "steps": [
+    {
+      "seq": 1,
+      "tool": "read_concept",
+      "summary": "/devops/merch-store.md",
+      "paths": [
+        "/devops/merch-store.md"
+      ],
+      "write": false
+    },
+    {
+      "seq": 2,
+      "tool": "search_knowledge",
+      "summary": "merch-store skill procedural workflow",
+      "paths": [
+        "/devops/merch-store.md",
+        "/services/understory.md"
+      ],
+      "write": false
+    },
+    {
+      "seq": 3,
+      "tool": "write_concept",
+      "summary": "/devops/merch-store-skill.md",
+      "paths": [
+        "/devops/merch-store-skill.md"
+      ],
+      "write": true
+    },
+    {
+      "seq": 4,
+      "tool": "patch_concept",
+      "summary": "/devops/merch-store.md",
+      "paths": [
+        "/devops/merch-store.md"
+      ],
+      "write": true
+    }
+  ],
+  "answer": "Here's what changed:\n\n1. **Created** `/devops/merch-store-skill.md` — a new Playbook concept documenting the merch-store procedural skill, including its activation triggers, 6-step workflow, design constraints, product presets, and troubleshooting scope.\n\n2. **Updated** `/devops/merch-store.md` — patched the \"Hermes Agent Role\" section to reference the new skill as the procedural workflow layer on top of the pipeline.",
+  "notation": "read merch-store.md → search \"merch-store skill procedural …\" (2) → write merch-store-skill.md → patch merch-store.md → ✓"
+}

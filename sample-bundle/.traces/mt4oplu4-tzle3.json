@@ -1,0 +1,61 @@
+{
+  "id": "mt4oplu4-tzle3",
+  "kind": "query",
+  "input": "what port does understory run on?",
+  "startedAt": "2026-08-22T18:00:48.665Z",
+  "durationMs": 19380,
+  "steps": [
+    {
+      "seq": 1,
+      "tool": "search_knowledge",
+      "summary": "understory port",
+      "paths": [
+        "/apis/billing-api.md"
+      ],
+      "write": false
+    },
+    {
+      "seq": 2,
+      "tool": "list_directory",
+      "summary": "",
+      "paths": [],
+      "write": false
+    },
+    {
+      "seq": 3,
+      "tool": "search_knowledge",
+      "summary": "understory",
+      "paths": [],
+      "write": false
+    },
+    {
+      "seq": 4,
+      "tool": "read_concept",
+      "summary": "/apis/billing-api.md",
+      "paths": [
+        "/apis/billing-api.md"
+      ],
+      "write": false
+    },
+    {
+      "seq": 5,
+      "tool": "read_concept",
+      "summary": "/playbooks/oncall-billing.md",
+      "paths": [
+        "/playbooks/oncall-billing.md"
+      ],
+      "write": false
+    },
+    {
+      "seq": 6,
+      "tool": "read_concept",
+      "summary": "/tables/customers.md",
+      "paths": [
+        "/tables/customers.md"
+      ],
+      "write": false
+    }
+  ],
+  "answer": "The knowledge base does not contain any information about \"understory\" or what port it runs on. The only concepts in the bundle are:\n\n- **[Billing API](/apis/billing-api.md)** — a REST API endpoint for billing charges.\n- **[Billing On-call Playbook](/playbooks/oncall-billing.md)** — steps for handling billing charge failures.\n- **[Customers](/tables/customers.md)** — a BigQuery table of customer records.\n\nNone of these mention \"understory.\"\n\n**Answer:** The knowledge base has no coverage of \"un…",
+  "notation": "search \"understory port\" (1) → browse layout → search \"understory\" (0) → read billing-api.md → read oncall-billing.md → read customers.md → ✓"
+}

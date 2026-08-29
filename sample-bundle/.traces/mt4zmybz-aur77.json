@@ -1,0 +1,22 @@
+{
+  "id": "mt4zmybz-aur77",
+  "kind": "query",
+  "input": "what types are in the memory?",
+  "startedAt": "2026-08-22T23:06:48.682Z",
+  "durationMs": 11365,
+  "steps": [
+    {
+      "seq": 1,
+      "tool": "list_directory",
+      "summary": "",
+      "paths": [],
+      "write": false
+    }
+  ],
+  "answer": "Here are the concept types currently in the knowledge base:\n\n1. **API Endpoint** — e.g., `billing-api.md`\n2. **Playbook** — e.g., `merch-design-skill.md`, `merch-store-skill.md`, `merch-store.md`, `oncall-billing.md`\n3. **Service** — e.g., `understory.md`\n4. **BigQuery Table** — e.g., `customers.md`\n\nThese four types are also listed as the preferred types to reuse when adding new concepts.",
+  "notation": "browse layout → ✓",
+  "outcome": "success",
+  "modelChain": [
+    "openai:qwen3.6-35b"
+  ]
+}

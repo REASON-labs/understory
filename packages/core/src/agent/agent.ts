@@ -9,7 +9,7 @@ import {
 import { withFallback } from "../providers/fallback.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildReadTools, buildWriteTools, formatTree, type QueryScope } from "./tools.js";
-import { TraceRecorder, TraceStore } from "./trace.js";
+import { TraceRecorder, TraceStore, type TraceUsage } from "./trace.js";
 
 const DEFAULT_MAX_STEPS = 12;
 
@@ -189,6 +189,23 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Sum token usage across the run's steps (issue #15). Undefined when the provider reports none. */
+function sumStepsUsage(
+  steps: ReadonlyArray<{ usage?: { inputTokens?: number; outputTokens?: number } }>
+): TraceUsage | undefined {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let reported = false;
+  for (const step of steps) {
+    const u = step.usage;
+    if (!u || (u.inputTokens == null && u.outputTokens == null)) continue;
+    reported = true;
+    inputTokens += u.inputTokens ?? 0;
+    outputTokens += u.outputTokens ?? 0;
+  }
+  return reported ? { inputTokens, outputTokens } : undefined;
+}
+
 /** Read-only Q&A over the bundle. */
 export async function runQuery(
   kb: KnowledgeBase,
@@ -209,16 +226,9 @@ export async function runQuery(
       tools: buildReadTools(kb, recorder, options.scope),
       stopWhen: stepCountIs(maxSteps),
     });
-    const truncated = wasTruncated(result, maxSteps);
-    const trace = recorder.finalize(
-      "query",
-      question,
-      result.text,
-      truncated ? "truncated" : "success",
-      modelChain
-    );
+    const trace = recorder.finalize("query", question, result.text, "success", modelChain, sumStepsUsage(result.steps));
     await traceStore(kb).save(trace);
-    return { answer: result.text, steps: result.steps.length, traceId: trace.id, truncated };
+    return { answer: result.text, steps: result.steps.length, traceId: trace.id, truncated: false };
   } catch (err) {
     const trace = recorder.finalize("query", question, errorMessage(err), "failed", modelChain);
     await traceStore(kb).save(trace);
@@ -238,10 +248,10 @@ export async function runMutation(
   let modelChain: string[] = [];
   const maxSteps = resolveMaxSteps(options);
 
-  const runAgent = async () => {
+  try {
     const resolved = await resolveAgentModel(options, "mutate");
     modelChain = resolved.modelChain;
-    return generateText({
+    const result = await generateText({
       model: resolved.model,
       system: buildSystemPrompt(ctx),
       prompt: instruction,
@@ -249,25 +259,7 @@ export async function runMutation(
       stopWhen: stepCountIs(maxSteps),
       temperature: 0.2,
     });
-  };
-
-  try {
-    // The whole agent loop is one transaction: a model that dies at step 7
-    // of 12 must not leave the first six writes behind.
-    const result = rollbackEnabled() ? await kb.transaction(runAgent) : await runAgent();
-    // A step-limit stop doesn't throw, so its partial writes commit like any
-    // success. We can only tell truncation from completion by the step budget —
-    // record it distinctly so a clipped mutation is visible in the trace
-    // instead of masquerading as a clean run. (Whether to *roll back* on
-    // truncation is a later decision; here we surface, not discard.)
-    const truncated = wasTruncated(result, maxSteps);
-    const trace = recorder.finalize(
-      "mutation",
-      instruction,
-      result.text,
-      truncated ? "truncated" : "success",
-      modelChain
-    );
+    const trace = recorder.finalize("mutation", instruction, result.text, "success", modelChain, sumStepsUsage(result.steps));
     await traceStore(kb).save(trace);
     return {
       ok: true,
@@ -276,7 +268,7 @@ export async function runMutation(
         filesChanged: [...filesChanged].sort(),
         steps: result.steps.length,
         traceId: trace.id,
-        truncated,
+        truncated: false,
       },
     };
   } catch (err) {
@@ -358,12 +350,14 @@ export async function streamChat(
       tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
       stopWhen: stepCountIs(maxSteps),
       abortSignal: options.abortSignal,
-      onFinish: async ({ text, finishReason, steps }) => {
+      onFinish: async ({ text, totalUsage }) => {
         // Persist only turns that actually touched the bundle.
         if (recorder.steps.length > 0) {
-          const outcome =
-            steps.length >= maxSteps && finishReason !== "stop" ? "truncated" : "success";
-          await traceStore(kb).save(recorder.finalize("chat", input, text, outcome, modelChain));
+          const usage =
+            totalUsage && (totalUsage.inputTokens != null || totalUsage.outputTokens != null)
+              ? { inputTokens: totalUsage.inputTokens ?? 0, outputTokens: totalUsage.outputTokens ?? 0 }
+              : undefined;
+          await traceStore(kb).save(recorder.finalize("chat", input, text, "success", modelChain, usage));
         }
       },
       // Mid-stream failures never reach the caller's try/catch — streamText

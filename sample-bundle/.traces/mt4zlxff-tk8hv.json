@@ -1,0 +1,24 @@
+{
+  "id": "mt4zlxff-tk8hv",
+  "kind": "query",
+  "input": "what services are documented in the memory?",
+  "startedAt": "2026-08-22T23:06:01.370Z",
+  "durationMs": 10849,
+  "steps": [
+    {
+      "seq": 1,
+      "tool": "search_knowledge",
+      "summary": "service",
+      "paths": [
+        "/services/understory.md"
+      ],
+      "write": false
+    }
+  ],
+  "answer": "Based on the knowledge base, there is **one** service documented:\n\n- **Understory** (`/services/understory.md`) — An AI agent service running on port 3800 inside a Docker container with host networking, using `llamacpp` via `llama-swap` for LLM inference.\n\nSources:\n- [/services/understory.md](/services/understory.md)",
+  "notation": "search \"service\" (1) → ✓",
+  "outcome": "success",
+  "modelChain": [
+    "openai:qwen3.6-35b"
+  ]
+}

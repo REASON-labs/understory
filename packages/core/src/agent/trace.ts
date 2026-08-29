@@ -16,6 +16,12 @@ export interface TraceStep {
 /** "rolled_back" = the run failed but the bundle was fully restored. */
 export type TraceOutcome = "success" | "rolled_back" | "partial" | "failed" | "truncated";
 
+/** Token accounting for the run (issue #15: context observability). */
+export interface TraceUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface QueryTrace {
   id: string;
   kind: "query" | "mutation" | "chat";
@@ -30,6 +36,8 @@ export interface QueryTrace {
   notation: string;
   outcome: TraceOutcome;
   modelChain: string[];
+  /** Total tokens consumed across all steps of the run, when the provider reports them. */
+  usage?: TraceUsage;
 }
 
 /** Collects steps during one agent run. Thread one instance through the tools. */
@@ -46,7 +54,8 @@ export class TraceRecorder {
     input: string,
     answer: string,
     outcome: TraceOutcome = "success",
-    modelChain: string[] = []
+    modelChain: string[] = [],
+    usage?: TraceUsage
   ): QueryTrace {
     return {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
@@ -59,6 +68,7 @@ export class TraceRecorder {
       notation: buildNotation(this.steps, outcome),
       outcome,
       modelChain,
+      usage,
     };
   }
 }
