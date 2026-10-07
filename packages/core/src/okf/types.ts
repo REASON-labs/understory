@@ -6,6 +6,8 @@ export interface ConceptFrontmatter {
   resource?: string;
   tags?: string[];
   timestamp?: string;
+  /** Provenance list, see sources.ts. Preserved across edits. */
+  sources?: import("./sources.js").ConceptSource[];
   /** Producer-defined keys are permitted and preserved. */
   [key: string]: unknown;
 }

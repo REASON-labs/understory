@@ -42,6 +42,8 @@ export interface QueryTrace {
 
 /** Collects steps during one agent run. Thread one instance through the tools. */
 export class TraceRecorder {
+  /** Fixed at construction so write tools can cite this run as a source (`trace:<id>`). */
+  readonly id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   readonly steps: TraceStep[] = [];
   private readonly t0 = Date.now();
 
@@ -58,7 +60,7 @@ export class TraceRecorder {
     usage?: TraceUsage
   ): QueryTrace {
     return {
-      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      id: this.id,
       kind,
       input: truncate(input, 300),
       startedAt: new Date(this.t0).toISOString(),

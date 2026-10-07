@@ -1,5 +1,6 @@
 import type { Bundle } from "./bundle.js";
 import { scanGraph } from "./graph.js";
+import { normalizeSources } from "./sources.js";
 
 export interface LintFinding {
   path: string;
@@ -22,6 +23,11 @@ export interface LintReport {
   orphans: LintFinding[];
   /** Outbound links pointing at nonexistent concepts. */
   brokenLinks: BrokenLink[];
+  /**
+   * Concepts with no `sources` (issue #13). Advisory only: it does not affect
+   * `healthy`, since every bundle predating provenance would otherwise fail.
+   */
+  unsourced: LintFinding[];
   healthy: boolean;
 }
 
@@ -36,11 +42,24 @@ export async function lintBundle(bundle: Bundle): Promise<LintReport> {
     .filter((n) => (inbound.get(n.path) ?? 0) === 0)
     .map((n) => ({ path: n.path, type: n.type, title: n.title }));
 
+  const unsourced: LintFinding[] = [];
+  for (const n of nodes) {
+    try {
+      const concept = await bundle.readConcept(n.path);
+      if (normalizeSources(concept.frontmatter.sources).length === 0) {
+        unsourced.push({ path: n.path, type: n.type, title: n.title });
+      }
+    } catch {
+      // Permissive: unreadable files are reported by validate, not lint.
+    }
+  }
+
   return {
     conceptCount: nodes.length,
     linkCount: edges.length,
     orphans,
     brokenLinks,
+    unsourced,
     healthy: orphans.length === 0 && brokenLinks.length === 0,
   };
 }
