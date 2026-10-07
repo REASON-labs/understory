@@ -171,7 +171,7 @@ node packages/server/dist/index.js
 # → http://localhost:3800  (web UI + /api + /mcp)
 ```
 
-Or build the container yourself: `docker compose up --build` (the repo's [docker-compose.yml](docker-compose.yml) builds from source and mounts `./sample-bundle`).
+Or build the container yourself: `docker compose up --build` (the repo's [docker-compose.yml](docker-compose.yml) builds from source and mounts `./sample-bundle` unless `BUNDLE_PATH` is set in `.env`).
 
 Dev mode (server on :3800, Vite HMR on :5180 with proxy):
 

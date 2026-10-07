@@ -8,7 +8,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - /home/jay/ai/memory/understory:/bundle
+      # Set BUNDLE_PATH in .env (gitignored) to your real bundle; defaults to the sample.
+      - ${BUNDLE_PATH:-./sample-bundle}:/bundle
     environment:
       BUNDLE_ROOT: /bundle
       AUTH_TOKEN: ${AUTH_TOKEN:-}
