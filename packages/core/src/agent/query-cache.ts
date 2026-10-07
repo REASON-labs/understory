@@ -107,7 +107,7 @@ function store(key: string, result: QueryResult, ttl: number): void {
   }
 }
 
-/** Test hook: reset module-level cache state. */
+/** Drop every cached answer: test hook, and used by forget so retracted text isn't kept in memory. */
 export function clearQueryCache(): void {
   cache.clear();
 }

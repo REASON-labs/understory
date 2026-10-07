@@ -184,6 +184,14 @@ export class TraceStore {
     }
   }
 
+  /** Delete traces by id (used by forget: traces store instruction and answer text). */
+  async remove(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      if (!/^[A-Za-z0-9-]+$/.test(id)) continue; // never build a path from odd input
+      await fs.unlink(path.join(this.dir, `${id}.json`)).catch(() => {});
+    }
+  }
+
   private async prune(): Promise<void> {
     const files = (await fs.readdir(this.dir)).filter((f) => f.endsWith(".json"));
     if (files.length <= MAX_TRACES) return;

@@ -4,7 +4,7 @@ import { simpleGit, type SimpleGit } from "simple-git";
 import { Bundle } from "./bundle.js";
 import { Journal } from "./journal.js";
 import { pruneEmptyDirs, regenerateIndexChain } from "./indexer.js";
-import { appendLog, readLog } from "./logger.js";
+import { appendLog, readLog, scrubLog } from "./logger.js";
 import { searchBundle, listTypes, type SearchOptions } from "./search.js";
 import { validateBundle } from "./validate.js";
 import { lintBundle, type LintReport } from "./lint.js";
@@ -151,6 +151,25 @@ export class KnowledgeBase {
     } catch {
       return [];
     }
+  }
+
+  /** Drop log.md bullets linking to these concepts (forget). Run under the write lock. */
+  scrubLog(conceptPaths: string[]): Promise<void> {
+    return this.enqueue(() => scrubLog(this.bundle, conceptPaths));
+  }
+
+  /** Commit any uncommitted changes (e.g. a log scrub). No-op without autocommit. */
+  commitPending(message: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.git) return;
+      try {
+        await this.git.add(".");
+        const status = await this.git.status();
+        if (!status.isClean()) await this.git.commit(`update: ${message}`);
+      } catch (err) {
+        console.error(`[understory] git commit failed: ${(err as Error).message}`);
+      }
+    });
   }
 
   /** Graph health: orphaned concepts + broken links (deterministic, no LLM). */
