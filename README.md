@@ -379,6 +379,18 @@ sources:
 
 Runs are cited automatically; the agent adds URLs, documents or people only when the instruction names them. Sources are append-only through the tools (overwrites and patches keep earlier entries; the list is capped at the newest 50). `sources` is an optional producer-defined key, so existing bundles stay valid, and `lint` lists concepts without it under `unsourced` without marking the bundle unhealthy.
 
+When a write changes a fact, the agent records the old value in `history` instead of leaving it in the body (a concept never asserts two contradictory facts):
+
+```yaml
+history:
+  - date: 2026-10-07
+    was: Office was at 12 Elm St
+    reason: moved
+    source: trace:mt4oplu4-tzle3
+```
+
+The trail is tool-managed and append-only (a model can't overwrite or null it), capped at the newest 5; git holds the full record. `memory_explain` shows it under "Superseded facts".
+
 This design mirrors the pattern in Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (index.md + log.md, create-vs-enrich, lint for orphans). Deferred from that pattern until scale warrants: an explicit page-type schema, and hybrid FTS5+embedding search (the naive scan in `search.ts` is fine into the low thousands of concepts).
 
 ## Tests

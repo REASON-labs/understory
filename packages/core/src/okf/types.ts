@@ -8,6 +8,8 @@ export interface ConceptFrontmatter {
   timestamp?: string;
   /** Provenance list, see sources.ts. Preserved across edits. */
   sources?: import("./sources.js").ConceptSource[];
+  /** Capped trail of facts this concept replaced, see history.ts. Preserved across edits. */
+  history?: import("./history.js").Supersession[];
   /** Producer-defined keys are permitted and preserved. */
   [key: string]: unknown;
 }

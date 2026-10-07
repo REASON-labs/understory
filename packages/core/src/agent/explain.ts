@@ -1,4 +1,5 @@
 import type { KnowledgeBase } from "../okf/index.js";
+import { normalizeHistory, type Supersession } from "../okf/history.js";
 import { normalizeSources, type ConceptSource } from "../okf/sources.js";
 import { TraceStore, type QueryTrace } from "./trace.js";
 
@@ -21,6 +22,8 @@ export interface ConceptExplanation {
   type?: string;
   description?: string;
   sources: ExplainedSource[];
+  /** Facts this concept replaced, oldest first (capped; git has the full record). */
+  superseded: Supersession[];
   /** Newest first. From git when autocommit is on, otherwise from log.md. */
   changes: ExplainedChange[];
   changesFrom: "git" | "log" | "none";
@@ -89,6 +92,7 @@ export async function explainConcept(
     type: fm.type,
     description: fm.description,
     sources,
+    superseded: normalizeHistory(fm.history),
     changes,
     changesFrom,
     links,
@@ -109,6 +113,13 @@ export function formatExplanation(x: ConceptExplanation): string {
       : "";
     lines.push(`- ${s.ref}${s.at ? ` (${s.at})` : ""}${run}`);
     if (s.quote) lines.push(`  > ${s.quote}`);
+  }
+
+  if (x.superseded.length) {
+    lines.push("", "## Superseded facts");
+    for (const h of x.superseded) {
+      lines.push(`- ${h.date}: was "${h.was}"${h.reason ? ` (${h.reason})` : ""}${h.source ? ` [${h.source}]` : ""}`);
+    }
   }
 
   lines.push("", `## Changes (${x.changesFrom})`);
