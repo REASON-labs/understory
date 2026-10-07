@@ -10,7 +10,7 @@ Fork: [REASON-labs/understory](https://github.com/REASON-labs/understory) (prima
 
 **Three ways in, one agent:**
 
-- **MCP server** — `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` tools over stdio or streamable HTTP. Each call drives an internal LLM agent with the OKF spec in its system prompt.
+- **MCP server** — `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` / `memory_explain` tools over stdio or streamable HTTP. Each call drives an internal LLM agent with the OKF spec in its system prompt.
 - **Web UI** — browse the bundle (tree, concept viewer, update log, conformance badge), see the memory as an Obsidian-style **force-directed graph** (drag/pan/zoom, colored by type, sized by connections, orphans ringed red, click to open), and chat with the same agent to test it. Tool calls render inline so you can watch it work.
 - **Query-path replay** — every agent run (query/mutation/chat) records its traversal (searches → reads → writes) as a compact notation, persisted under `<bundle>/.traces/`. The graph view lists recent runs; selecting one replays the path as numbered directed hops over the graph — visited concepts ringed, search hits dotted, everything else faded.
 - **CLI** — `pnpm agent:query "..."` / `pnpm agent:mutate "..."` smoke entries.
@@ -126,7 +126,7 @@ Then:
   ```bash
   claude mcp add --transport http ustory http://localhost:3800/mcp
   ```
-- Your agent now has `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain`, and gets a seed overview of the memory at every session start.
+- Your agent now has `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` / `memory_explain`, and gets a seed overview of the memory at every session start.
 
 Teach it something (`memory_add`: "We deploy on Fridays, never Mondays"), then open the graph and watch the concept wire itself in. Deploying with Portainer? Use [docker-compose.portainer.yml](docker-compose.portainer.yml) as a repository stack.
 
@@ -226,6 +226,7 @@ Memory is a graph, not a pile of notes, and graphs rot: concepts go **orphaned**
 
 - **Write-time linking** — new knowledge either enriches the concept it belongs to (an attribute of an existing entity is patched in, not filed separately) or, when it's a distinct entity, is created *and* back-linked from related concepts. Contradictions are superseded in place, never left standing alongside the old value.
 - **`memory_maintain`** — a deterministic lint (orphans + broken links, surfaced in `memory_status` under `graph`) drives an internal agent to wire orphans into related concepts and fix dangling links. Run it periodically to counter drift; it's a no-op when the graph is already healthy.
+- **`memory_explain`** — deterministic (no LLM): for one concept, its recorded `sources` (with the agent run that wrote it), its change history (git when `GIT_AUTOCOMMIT` is on, otherwise `log.md`), and what links to and from it. Missing evidence is reported as a caveat rather than guessed.
 
 ### Scoped queries
 

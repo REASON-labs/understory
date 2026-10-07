@@ -4,3 +4,5 @@ export { buildSystemPrompt } from "./system-prompt.js";
 export { buildReadTools, buildWriteTools, formatTree, type QueryScope } from "./tools.js";
 export { TraceRecorder, TraceStore, buildNotation } from "./trace.js";
 export type { QueryTrace, TraceStep, TraceOutcome } from "./trace.js";
+export { explainConcept, formatExplanation } from "./explain.js";
+export type { ConceptExplanation, ExplainedSource, ExplainedChange } from "./explain.js";
