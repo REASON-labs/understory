@@ -78,7 +78,7 @@ export async function explainConcept(
       .map((e) => ({ date: e.date, summary: `${e.action}: ${e.summary}` }));
     if (changes.length) changesFrom = "log";
   }
-  if (changesFrom === "none") notes.push("No change history found (autocommit off and log.md has no entry).");
+  if (changesFrom === "none") notes.push("No change history found (no commit touches this file and log.md has no entry for it).");
 
   const { edges } = await kb.graph();
   const links = {

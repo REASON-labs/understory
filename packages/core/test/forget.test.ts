@@ -21,14 +21,15 @@ async function seed() {
   // sole-source: only the secret URL
   await kb.writeConcept(
     "/solo.md",
-    { type: "note", title: "Solo", sources: [{ ref: SECRET_URL, quote: QUOTE }] },
+    // Every agent-written concept also cites the run that wrote it.
+    { type: "note", title: "Solo", sources: [{ ref: SECRET_URL, quote: QUOTE }, { ref: "trace:write1" }] },
     `${QUOTE}\n`,
     "Added solo."
   );
   // derived solely from the sole-source concept: cascades
   await kb.writeConcept(
     "/derived.md",
-    { type: "note", title: "Derived", sources: [{ ref: "/solo.md" }] },
+    { type: "note", title: "Derived", sources: [{ ref: "/solo.md" }, { ref: "trace:write2" }] },
     "Summary of solo.\n",
     "Added derived."
   );
@@ -38,7 +39,7 @@ async function seed() {
     {
       type: "note",
       title: "Shared",
-      sources: [{ ref: SECRET_URL, quote: QUOTE }, { ref: "https://example.com/ok" }],
+      sources: [{ ref: SECRET_URL, quote: QUOTE }, { ref: "https://example.com/ok" }, { ref: "trace:write3" }],
       history: [{ date: "2026-10-01", was: "old claim", source: "trace:run1" }],
     },
     `Keep this fact.\n${QUOTE}\n`,
@@ -142,7 +143,7 @@ describe("runForget", () => {
     const shared = await kb.readConcept("/shared.md");
     expect(shared.body).not.toContain(QUOTE);
     expect(shared.body).toContain("Keep this fact.");
-    expect(normalizeSources(shared.frontmatter.sources).map((s) => s.ref)).toEqual(["https://example.com/ok"]); // incl. no dangling cite of the deleted rewrite run
+    expect(normalizeSources(shared.frontmatter.sources).map((s) => s.ref)).toEqual(["https://example.com/ok", "trace:write3"]); // incl. no dangling cite of the deleted rewrite run
     expect(JSON.stringify(shared.frontmatter)).not.toContain(QUOTE);
 
     // The agent was told what to remove, and the neutral log wording.

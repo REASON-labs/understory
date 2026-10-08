@@ -78,7 +78,13 @@ export async function planForget(kb: KnowledgeBase, target: ForgetTarget): Promi
       if (deleted.has(p)) continue;
       const hits = info.refs.filter((r) => refs.has(r));
       if (hits.length === 0) continue;
-      if (hits.length === info.refs.length) {
+      // Every agent-written concept also cites the run that wrote it
+      // (`trace:<id>`). That records HOW it was written, not an independent
+      // origin, so it must not keep a concept alive once every real origin is
+      // forgotten. Only a trace-only concept is judged by its trace refs.
+      const origins = info.refs.filter((r) => !r.startsWith("trace:"));
+      const judged = origins.length > 0 ? origins : info.refs;
+      if (judged.every((r) => refs.has(r))) {
         deleted.add(p);
         refs.add(p);
         redactBySource.delete(p);
@@ -227,7 +233,7 @@ export function formatForget(r: ForgetResult): string {
     `Delete (all provenance forgotten):\n${list(p.delete)}`,
     `Rewrite (mixed provenance or links to deleted concepts):\n${list(p.redact)}`,
     `Scrub history trail only:\n${list(p.scrubHistory)}`,
-    `Run traces ${r.status === "dry_run" ? "to delete" : "deleted"}: ${p.traces.length}`,
+    `Run traces ${r.status === "forgotten" ? "deleted" : "to delete"}: ${p.traces.length}`,
     ...(r.warnings.length ? [`Warnings:\n${list(r.warnings)}`] : []),
     r.status === "forgotten"
       ? "Not erased: git history keeps earlier versions (rewrite it separately if required)."
