@@ -27,6 +27,33 @@ if (!fs.existsSync(stdioJs)) {
   process.exit(2);
 }
 
+// ── Preflight: fail fast with a plain-English reason, before anything is copied ──
+const keep = process.argv.includes("--keep");
+async function reachable(base) {
+  try {
+    await fetch(base.replace(/\/+$/, "") + "/models", { signal: AbortSignal.timeout(8000) });
+    return true; // any HTTP answer means the host is reachable
+  } catch {
+    return false;
+  }
+}
+for (const v of ["LLM_API_BASE_URL", "LLM_API_KEY", "LLM_API_FORMAT", "LLM_MODEL"]) {
+  if (!process.env[v]) {
+    console.error(`PREFLIGHT FAILED: ${v} is not set. Set all four LLM_* variables to the values your live understory uses.`);
+    process.exit(2);
+  }
+}
+if (!(await reachable(process.env.LLM_API_BASE_URL))) {
+  const alt = process.env.LLM_API_BASE_URL.replace("host.docker.internal", "localhost");
+  if (alt !== process.env.LLM_API_BASE_URL && (await reachable(alt))) {
+    console.log(`NOTE: ${process.env.LLM_API_BASE_URL} only resolves inside Docker; using ${alt} instead.`);
+    process.env.LLM_API_BASE_URL = alt;
+  } else {
+    console.error(`PREFLIGHT FAILED: cannot reach the LLM at ${process.env.LLM_API_BASE_URL}. Nothing was run. Fix LLM_API_BASE_URL (use an address reachable from THIS machine, not host.docker.internal) and rerun.`);
+    process.exit(2);
+  }
+}
+
 const dest = path.join(os.tmpdir(), `ustory-rollout-${Date.now()}`);
 fs.cpSync(srcBundle, dest, { recursive: true });
 
@@ -245,4 +272,17 @@ try {
 const reportFile = path.join(os.tmpdir(), `ustory-rollout-report-${Date.now()}.txt`);
 fs.writeFileSync(reportFile, log.join("\n"));
 say(`Full log saved to: ${reportFile}`);
-process.exit(count("FAIL") > 0 ? 1 : 0);
+const failed = count("FAIL");
+const warned = count("WARN");
+say(
+  failed === 0
+    ? `
+VERDICT: ALL CHECKS PASSED${warned ? ` (${warned} warning(s): model behaviour, not code)` : ""}`
+    : `
+VERDICT: ${failed} CHECK(S) FAILED. Paste the ENTIRE output above to the developer.`
+);
+if (!keep) {
+  fs.rmSync(dest, { recursive: true, force: true });
+  say(`Test copy deleted. (Use --keep to retain it.)`);
+}
+process.exit(failed > 0 ? 1 : 0);
