@@ -4,6 +4,8 @@ import {
   KnowledgeBase,
   runMutation,
   runQueryCached,
+  explainConcept,
+  formatExplanation,
   type MutationOutcome,
   type QueryScope,
 } from "@understory/core";
@@ -207,6 +209,29 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
           },
         ],
       };
+    }
+  );
+
+  server.registerTool(
+    "memory_explain",
+    {
+      title: "Explain a concept",
+      description:
+        "Deterministic (no LLM): why the knowledge base holds a concept — its recorded sources (with the agent run that wrote it), its change history, and what links to and from it. Use it to check where a fact came from before relying on it. Gaps in the evidence are reported, not guessed.",
+      inputSchema: {
+        path: z.string().describe('Bundle path of the concept, e.g. "/services/billing.md"'),
+      },
+    },
+    async ({ path }) => {
+      try {
+        const explanation = await explainConcept(kb, path);
+        return { content: [{ type: "text", text: formatExplanation(explanation) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Cannot explain ${path}: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
     }
   );
 

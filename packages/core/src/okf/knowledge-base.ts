@@ -131,6 +131,28 @@ export class KnowledgeBase {
     return validateBundle(this.bundle);
   }
 
+  /**
+   * Commit history for one concept, newest first. Empty when autocommit is off
+   * or the file has no commits; callers fall back to the update log.
+   */
+  async history(
+    conceptPath: string,
+    limit = 20
+  ): Promise<{ date: string; summary: string; commit: string }[]> {
+    if (!this.git) return [];
+    try {
+      const file = this.bundle.toBundlePath(conceptPath).replace(/^\//, "");
+      const log = await this.git.log({ file, maxCount: limit });
+      return log.all.map((c) => ({
+        date: c.date.slice(0, 10),
+        summary: c.message,
+        commit: c.hash.slice(0, 7),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   /** Graph health: orphaned concepts + broken links (deterministic, no LLM). */
   lint(): Promise<LintReport> {
     return lintBundle(this.bundle);
