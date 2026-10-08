@@ -363,6 +363,21 @@ git handles runs that "succeed" but write something wrong. A rollback with git
 enabled lands as a `revert:` commit rather than a dirty working tree.
 `MUTATION_ROLLBACK=false` restores upstream behaviour.
 
+### Provenance
+
+Every concept written through the agent records where its knowledge came from in a `sources` frontmatter list:
+
+```yaml
+sources:
+  - ref: trace:mt4oplu4-tzle3       # the agent run that wrote it (see .traces/)
+    at: 2026-10-07
+  - ref: https://example.com/spec   # an origin the instruction cited
+    quote: "Deploys freeze on Fridays."
+    at: 2026-10-07
+```
+
+Runs are cited automatically; the agent adds URLs, documents or people only when the instruction names them. Sources are append-only through the tools (overwrites and patches keep earlier entries; the list is capped at the newest 50). `sources` is an optional producer-defined key, so existing bundles stay valid, and `lint` lists concepts without it under `unsourced` without marking the bundle unhealthy.
+
 This design mirrors the pattern in Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (index.md + log.md, create-vs-enrich, lint for orphans). Deferred from that pattern until scale warrants: an explicit page-type schema, and hybrid FTS5+embedding search (the naive scan in `search.ts` is fine into the low thousands of concepts).
 
 ## Tests

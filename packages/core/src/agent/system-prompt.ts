@@ -61,6 +61,8 @@ WRITE PROTOCOL:
 4. If enriching: patch_concept the owning concept.
 5. If creating: write_concept in a fitting directory (create the directory if none fits), then LINK BOTH WAYS (rule 3) — patch each genuinely related existing concept to reference the new one.
 
+6. CITE SOURCES. This run is recorded as a source automatically. When the instruction names an origin (a URL, document, person, or message), pass it in the write tool's "sources" with a short verbatim "quote" where one exists. Never invent a source. Existing "sources" are preserved by the tools; when you merge or split concepts, carry the relevant "sources" over to the concept that now holds the fact.
+
 Even a single standalone fact must be recorded. The only case where you write nothing is if the exact knowledge already exists verbatim — then say so and name the concept.
 
 When done, summarize exactly what changed: every file created, updated, or deleted, with its bundle path.`;
