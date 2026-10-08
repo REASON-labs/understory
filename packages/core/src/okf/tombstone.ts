@@ -51,3 +51,23 @@ export async function forgottenRefs(root: string, refs: string[]): Promise<strin
   const known = new Set((await load(root)).entries.map((e) => e.hash));
   return refs.filter((r) => known.has(hashRef(r)));
 }
+
+const URL_RE = /https?:\/\/[^\s<>"'`]+/g;
+const PATH_RE = /\/[\w\-./]+\.md\b/g;
+
+/**
+ * Forgotten refs mentioned in free text (an incoming memory_add/memory_update).
+ * The write-tool guard only fires when a model cites the source; a model that
+ * records the same fact without citing it would slip past, so also check the
+ * instruction itself. Candidates are URLs and bundle paths, tried with and
+ * without trailing punctuation ("…/orion." is how people write them).
+ */
+export async function forgottenInText(root: string, text: string): Promise<string[]> {
+  const candidates = new Set<string>();
+  for (const m of [...(text.match(URL_RE) ?? []), ...(text.match(PATH_RE) ?? [])]) {
+    candidates.add(m);
+    const trimmed = m.replace(/[.,;:!?)\]}]+$/, "");
+    if (trimmed) candidates.add(trimmed);
+  }
+  return forgottenRefs(root, [...candidates]);
+}

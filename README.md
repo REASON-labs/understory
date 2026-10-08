@@ -398,7 +398,7 @@ The trail is tool-managed and append-only (a model can't overwrite or null it), 
 - Concepts whose only provenance is forgotten are deleted, and the cascade follows: anything citing a deleted concept as its sole source goes too.
 - Concepts with mixed provenance, or that link to a deleted concept, are rewritten by an internal agent (transactional; if it fails nothing changes). Known excerpts are checked afterwards and flagged if still present.
 - `sources` and `history` entries for the forgotten material are stripped, `log.md` bullets linking to deleted concepts are removed, and run traces that cited or touched affected concepts are deleted (they store instruction and answer text). Caches are cleared.
-- The source is **tombstoned** in `.forgotten.json` (hashes only), so writes citing it are refused afterwards, including from dream passes.
+- The source is **tombstoned** in `.forgotten.json` (hashes only), so writes citing it are refused afterwards, including from dream passes. `memory_add` / `memory_update` also refuse input that merely *mentions* a forgotten URL or bundle path, so re-adding the fact uncited doesn't slip through. To allow a source again, delete its hash entry from `.forgotten.json`.
 - **Not erased:** git history still contains earlier versions. If that matters, rewrite history separately (e.g. `git filter-repo`) after forgetting.
 
 This design mirrors the pattern in Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (index.md + log.md, create-vs-enrich, lint for orphans). Deferred from that pattern until scale warrants: an explicit page-type schema, and hybrid FTS5+embedding search (the naive scan in `search.ts` is fine into the low thousands of concepts).
