@@ -6,6 +6,7 @@ export { appendLog, readLog } from "./logger.js";
 export { searchBundle, listTypes, matchesFilters, inDirectory, type SearchOptions } from "./search.js";
 export { validateBundle } from "./validate.js";
 export { normalizeSources, mergeSources, MAX_SOURCES, type ConceptSource } from "./sources.js";
+export { normalizeHistory, appendHistory, MAX_HISTORY, type Supersession } from "./history.js";
 export { lintBundle } from "./lint.js";
 export type { LintReport, LintFinding, BrokenLink } from "./lint.js";
 export { buildGraph, scanGraph } from "./graph.js";

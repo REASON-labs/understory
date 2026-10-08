@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import {
   inDirectory,
+  appendHistory,
   mergeSources,
   normalizeSources,
   type ConceptSource,
@@ -32,6 +33,13 @@ const sourcesSchema = z
   .optional()
   .describe(
     "Where this knowledge came from: external origins the instruction cites (URL, document, person, message) with an optional verbatim supporting quote. This run is cited automatically, so add refs only for origins beyond the instruction itself. Existing sources are always preserved."
+  );
+
+const replacedSchema = z
+  .array(z.object({ was: z.string().min(1), reason: z.string().optional() }))
+  .optional()
+  .describe(
+    "When this write CHANGES a fact the concept previously asserted, list each replaced statement here (short, e.g. 'Office was at 12 Elm St') with an optional reason. The body must no longer contain the old value; this keeps the trail without leaving a contradiction. Omit for pure additions."
   );
 
 const logSummary = z
@@ -158,6 +166,21 @@ function runSource(trace?: TraceRecorder): ConceptSource[] {
   return trace ? [{ ref: `trace:${trace.id}` }] : [];
 }
 
+/** Attach the current run to each replaced statement so a change is traceable. */
+function withSource(
+  replaced: { was: string; reason?: string }[] | undefined,
+  trace?: TraceRecorder
+): { was: string; reason?: string; source?: string }[] {
+  return (replaced ?? []).map((r) => ({ ...r, ...(trace ? { source: `trace:${trace.id}` } : {}) }));
+}
+
+/** `history` is tool-managed; a model-supplied value must not overwrite the real trail. */
+function stripHistory<T extends object>(obj: T): T {
+  const copy = { ...obj } as T & { history?: unknown };
+  delete copy.history;
+  return copy;
+}
+
 export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, trace?: TraceRecorder) {
   return {
     write_concept: tool({
@@ -168,9 +191,10 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         frontmatter: frontmatterSchema,
         body: z.string().describe("Markdown body (no frontmatter block)"),
         sources: sourcesSchema,
+        replaced: replacedSchema,
         log_summary: logSummary,
       }),
-      execute: async ({ path, frontmatter, body, sources, log_summary }) => {
+      execute: async ({ path, frontmatter, body, sources, replaced, log_summary }) => {
         // An overwrite must not drop provenance the previous version carried.
         const existing = await kb.readConcept(path).catch(() => null);
         const merged = mergeSources(existing?.frontmatter.sources, [
@@ -178,7 +202,13 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
           ...normalizeSources(sources),
           ...runSource(trace),
         ]);
-        const c = await kb.writeConcept(path, { ...frontmatter, sources: merged }, body, log_summary);
+        const history = appendHistory(existing?.frontmatter.history, withSource(replaced, trace));
+        const c = await kb.writeConcept(
+          path,
+          { ...stripHistory(frontmatter), sources: merged, ...(history.length ? { history } : {}) },
+          body,
+          log_summary
+        );
         filesChanged.add(c.path);
         recordHotWrite(c.path);
         trace?.record("write_concept", c.path, [c.path], true);
@@ -208,9 +238,10 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
           .optional()
           .describe("Replace the entire markdown body (frontmatter untouched). Use for restructuring; prefer replace_section for targeted edits."),
         sources: sourcesSchema,
+        replaced: replacedSchema,
         log_summary: logSummary,
       }),
-      execute: async ({ path, frontmatter, replace_section, replace_body, sources, log_summary }) => {
+      execute: async ({ path, frontmatter, replace_section, replace_body, sources, replaced, log_summary }) => {
         // Provenance only grows through patches: new origins append, existing
         // ones survive even if the model sends frontmatter.sources: null.
         const existing = await kb.readConcept(path);
@@ -219,10 +250,15 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
           ...normalizeSources(sources),
           ...runSource(trace),
         ]);
+        const history = appendHistory(existing.frontmatter.history, withSource(replaced, trace));
         const c = await kb.patchConcept(
           path,
           {
-            frontmatter: { ...frontmatter, sources: merged },
+            frontmatter: {
+              ...(frontmatter ? stripHistory(frontmatter) : {}),
+              sources: merged,
+              ...(history.length ? { history } : {}),
+            },
             replaceSection: replace_section
               ? { heading: replace_section.heading, content: replace_section.content }
               : undefined,
