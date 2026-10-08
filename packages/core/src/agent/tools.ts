@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   inDirectory,
   appendHistory,
+  forgottenRefs,
   mergeSources,
   normalizeSources,
   type ConceptSource,
@@ -181,6 +182,17 @@ function stripHistory<T extends object>(obj: T): T {
   return copy;
 }
 
+/** A forgotten source must not be cited again, by a user, a replay, or a dream pass. */
+async function rejectForgotten(kb: KnowledgeBase, ...lists: unknown[]): Promise<void> {
+  const refs = lists.flatMap((l) => normalizeSources(l).map((s) => s.ref));
+  const blocked = await forgottenRefs(kb.bundle.root, refs);
+  if (blocked.length > 0) {
+    throw new Error(
+      `Refusing to write: ${blocked.length} cited source(s) were forgotten at the owner's request. Do not record knowledge derived from them.`
+    );
+  }
+}
+
 export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, trace?: TraceRecorder) {
   return {
     write_concept: tool({
@@ -195,6 +207,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         log_summary: logSummary,
       }),
       execute: async ({ path, frontmatter, body, sources, replaced, log_summary }) => {
+        await rejectForgotten(kb, frontmatter.sources, sources);
         // An overwrite must not drop provenance the previous version carried.
         const existing = await kb.readConcept(path).catch(() => null);
         const merged = mergeSources(existing?.frontmatter.sources, [
@@ -242,6 +255,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         log_summary: logSummary,
       }),
       execute: async ({ path, frontmatter, replace_section, replace_body, sources, replaced, log_summary }) => {
+        await rejectForgotten(kb, frontmatter?.sources, sources);
         // Provenance only grows through patches: new origins append, existing
         // ones survive even if the model sends frontmatter.sources: null.
         const existing = await kb.readConcept(path);

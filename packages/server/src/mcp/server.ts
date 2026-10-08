@@ -5,6 +5,8 @@ import {
   runMutation,
   runQueryCached,
   explainConcept,
+  formatForget,
+  runForget,
   formatExplanation,
   type MutationOutcome,
   type QueryScope,
@@ -231,6 +233,32 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
           content: [{ type: "text", text: `Cannot explain ${path}: ${(err as Error).message}` }],
           isError: true,
         };
+      }
+    }
+  );
+
+  server.registerTool(
+    "memory_forget",
+    {
+      title: "Forget a source or concept",
+      description:
+        "Retract knowledge at the owner's request and everything derived from it: concepts whose only provenance is the target are deleted, mixed ones are rewritten, run traces are deleted, caches are cleared, and the source is tombstoned so it cannot be cited again. Give exactly one of source (URL, trace:<id>, or bundle path) or path. DEFAULTS TO A DRY RUN that only lists what would change; call again with dry_run=false to apply. Git history is not rewritten.",
+      inputSchema: {
+        source: z.string().optional().describe("A source ref recorded in concept sources (URL, trace:<id>, bundle path)"),
+        path: z.string().optional().describe('A concept to forget, e.g. "/people/alice.md"'),
+        dry_run: z.boolean().optional().describe("Default true. Set false to actually apply."),
+      },
+    },
+    async ({ source, path, dry_run }) => {
+      try {
+        const result = await runForget(kb, { source, path }, { dryRun: dry_run !== false });
+        if (result.status === "forgotten") await refreshSeed();
+        return {
+          content: [{ type: "text", text: formatForget(result) }],
+          isError: result.status === "aborted",
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Cannot forget: ${(err as Error).message}` }], isError: true };
       }
     }
   );

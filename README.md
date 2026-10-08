@@ -10,7 +10,7 @@ Fork: [REASON-labs/understory](https://github.com/REASON-labs/understory) (prima
 
 **Three ways in, one agent:**
 
-- **MCP server** — `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` / `memory_explain` tools over stdio or streamable HTTP. Each call drives an internal LLM agent with the OKF spec in its system prompt.
+- **MCP server** — `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` / `memory_explain` / `memory_forget` tools over stdio or streamable HTTP. Each call drives an internal LLM agent with the OKF spec in its system prompt.
 - **Web UI** — browse the bundle (tree, concept viewer, update log, conformance badge), see the memory as an Obsidian-style **force-directed graph** (drag/pan/zoom, colored by type, sized by connections, orphans ringed red, click to open), and chat with the same agent to test it. Tool calls render inline so you can watch it work.
 - **Query-path replay** — every agent run (query/mutation/chat) records its traversal (searches → reads → writes) as a compact notation, persisted under `<bundle>/.traces/`. The graph view lists recent runs; selecting one replays the path as numbered directed hops over the graph — visited concepts ringed, search hits dotted, everything else faded.
 - **CLI** — `pnpm agent:query "..."` / `pnpm agent:mutate "..."` smoke entries.
@@ -126,7 +126,7 @@ Then:
   ```bash
   claude mcp add --transport http ustory http://localhost:3800/mcp
   ```
-- Your agent now has `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` / `memory_explain`, and gets a seed overview of the memory at every session start.
+- Your agent now has `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` / `memory_explain` / `memory_forget`, and gets a seed overview of the memory at every session start.
 
 Teach it something (`memory_add`: "We deploy on Fridays, never Mondays"), then open the graph and watch the concept wire itself in. Deploying with Portainer? Use [docker-compose.portainer.yml](docker-compose.portainer.yml) as a repository stack.
 
@@ -390,6 +390,16 @@ history:
 ```
 
 The trail is tool-managed and append-only (a model can't overwrite or null it), capped at the newest 5; git holds the full record. `memory_explain` shows it under "Superseded facts".
+
+#### Forgetting
+
+`memory_forget` retracts a source (URL, `trace:<id>`, or bundle path) or a whole concept, and everything derived from it. **It defaults to a dry run** that lists what would change; call it again with `dry_run=false` to apply.
+
+- Concepts whose only provenance is forgotten are deleted, and the cascade follows: anything citing a deleted concept as its sole source goes too.
+- Concepts with mixed provenance, or that link to a deleted concept, are rewritten by an internal agent (transactional; if it fails nothing changes). Known excerpts are checked afterwards and flagged if still present.
+- `sources` and `history` entries for the forgotten material are stripped, `log.md` bullets linking to deleted concepts are removed, and run traces that cited or touched affected concepts are deleted (they store instruction and answer text). Caches are cleared.
+- The source is **tombstoned** in `.forgotten.json` (hashes only), so writes citing it are refused afterwards, including from dream passes.
+- **Not erased:** git history still contains earlier versions. If that matters, rewrite history separately (e.g. `git filter-repo`) after forgetting.
 
 This design mirrors the pattern in Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (index.md + log.md, create-vs-enrich, lint for orphans). Deferred from that pattern until scale warrants: an explicit page-type schema, and hybrid FTS5+embedding search (the naive scan in `search.ts` is fine into the low thousands of concepts).
 

@@ -80,3 +80,21 @@ export async function readLog(bundle: Bundle): Promise<LogEntry[]> {
   }
   return entries;
 }
+
+/**
+ * Remove log bullets that link to any of the given concept paths (forget).
+ * Exact `(path)` link match only, so unrelated entries are never touched.
+ */
+export async function scrubLog(bundle: Bundle, conceptPaths: string[]): Promise<void> {
+  if (conceptPaths.length === 0) return;
+  const logPath = path.join(bundle.root, "log.md");
+  let raw: string;
+  try {
+    raw = await fs.readFile(logPath, "utf-8");
+  } catch {
+    return;
+  }
+  const needles = conceptPaths.map((p) => `(${p})`);
+  const kept = raw.split("\n").filter((line) => !needles.some((n) => line.includes(n)));
+  await fs.writeFile(logPath, kept.join("\n"), "utf-8");
+}

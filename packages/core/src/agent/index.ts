@@ -6,3 +6,5 @@ export { TraceRecorder, TraceStore, buildNotation } from "./trace.js";
 export type { QueryTrace, TraceStep, TraceOutcome } from "./trace.js";
 export { explainConcept, formatExplanation } from "./explain.js";
 export type { ConceptExplanation, ExplainedSource, ExplainedChange } from "./explain.js";
+export { planForget, runForget, formatForget } from "./forget.js";
+export type { ForgetTarget, ForgetPlan, ForgetResult } from "./forget.js";
