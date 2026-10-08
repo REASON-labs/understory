@@ -5,6 +5,7 @@ import {
   runMutation,
   runQueryCached,
   explainConcept,
+  forgottenInText,
   formatForget,
   runForget,
   formatExplanation,
@@ -97,6 +98,27 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
     }
   };
 
+  /**
+   * Refuse input that mentions a forgotten source. The tombstone is also
+   * enforced in the write tools, but only when a model cites the source;
+   * checking the instruction itself closes the uncited-restatement gap.
+   */
+  const forgottenInputResponse = async (text: string) => {
+    const hits = await forgottenInText(kb.bundle.root, text);
+    if (hits.length === 0) return null;
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text:
+            `Refusing: this mentions source(s) that were forgotten at the owner's request: ${hits.join(", ")}. ` +
+            `Nothing was written. To allow them again, remove the matching entries from .forgotten.json in the bundle.`,
+        },
+      ],
+      isError: true,
+    };
+  };
+
   const mutationOutcomeResponse = (outcome: MutationOutcome) => {
     if (outcome.ok) {
       const { summary, filesChanged } = outcome.result;
@@ -140,6 +162,8 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
       },
     },
     async ({ content, suggested_path }) => {
+      const refused = await forgottenInputResponse(content);
+      if (refused) return refused;
       // Wrap the payload as an explicit directive. Bare content (e.g. a plain
       // fact like "The user's name is Anirban Kar.") otherwise reads as a chat
       // message and the agent replies conversationally instead of persisting it.
@@ -170,6 +194,8 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
       },
     },
     async ({ instruction }) => {
+      const refused = await forgottenInputResponse(instruction);
+      if (refused) return refused;
       const outcome = await runMutation(kb, instruction);
       await refreshSeed();
       return mutationOutcomeResponse(outcome);

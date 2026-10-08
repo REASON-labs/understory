@@ -204,3 +204,19 @@ describe("runForget", () => {
     expect(result.warnings.join(" ")).toMatch(/shared\.md still contains/);
   });
 });
+
+describe("forgottenInText", () => {
+  it("catches forgotten URLs and paths in free text, including trailing punctuation", async () => {
+    const { addTombstones, forgottenInText } = await import("../src/okf/index.js");
+    await addTombstones(root, ["https://example.com/orion", "/people/dana.md"]);
+    expect(await forgottenInText(root, "Orion launches in March, per https://example.com/orion.")).toEqual([
+      "https://example.com/orion",
+    ]);
+    expect(await forgottenInText(root, "see (https://example.com/orion), and /people/dana.md!")).toEqual([
+      "https://example.com/orion",
+      "/people/dana.md",
+    ]);
+    expect(await forgottenInText(root, "nothing relevant at https://example.com/other")).toEqual([]);
+    expect(await forgottenInText(root, "no refs at all")).toEqual([]);
+  });
+});
