@@ -182,6 +182,21 @@ function stripHistory<T extends object>(obj: T): T {
   return copy;
 }
 
+/**
+ * Frontmatter keys must be plain words. Small models sometimes emit keys like
+ * `resource}: ~/x` (a stray bracket or colon inside the key), which then sit in
+ * the bundle forever. Rejecting gives the model an error it can correct.
+ */
+function assertSaneKeys(frontmatter: Record<string, unknown> | undefined): void {
+  for (const key of Object.keys(frontmatter ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key)) {
+      throw new Error(
+        `Invalid frontmatter key ${JSON.stringify(key)}: keys must be plain words (letters, digits, _ . -). Fix the key and retry.`
+      );
+    }
+  }
+}
+
 /** A forgotten source must not be cited again, by a user, a replay, or a dream pass. */
 async function rejectForgotten(kb: KnowledgeBase, ...lists: unknown[]): Promise<void> {
   const refs = lists.flatMap((l) => normalizeSources(l).map((s) => s.ref));
@@ -197,7 +212,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
   return {
     write_concept: tool({
       description:
-        "Create a new concept or fully overwrite an existing one. Frontmatter must include a non-empty 'type'. index.md and log.md maintenance is automatic — never write those.",
+        "Create a new concept or fully overwrite an existing one. Frontmatter must include a non-empty 'type'. If you change or correct any fact the concept already stated, you MUST also pass 'replaced'. index.md and log.md maintenance is automatic — never write those.",
       inputSchema: z.object({
         path: conceptPath,
         frontmatter: frontmatterSchema,
@@ -207,6 +222,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         log_summary: logSummary,
       }),
       execute: async ({ path, frontmatter, body, sources, replaced, log_summary }) => {
+        assertSaneKeys(frontmatter);
         await rejectForgotten(kb, frontmatter.sources, sources);
         // An overwrite must not drop provenance the previous version carried.
         const existing = await kb.readConcept(path).catch(() => null);
@@ -230,7 +246,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
     }),
     patch_concept: tool({
       description:
-        "Targeted update of an existing concept: merge frontmatter keys (null deletes a key) and/or replace one top-level '# Section' body section. Prefer this over write_concept for small edits.",
+        "Targeted update of an existing concept: merge frontmatter keys (null deletes a key) and/or replace one top-level '# Section' body section. Prefer this over write_concept for small edits. If you change or correct any fact the concept already stated, you MUST also pass 'replaced'.",
       inputSchema: z.object({
         path: conceptPath,
         frontmatter: z
@@ -255,6 +271,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         log_summary: logSummary,
       }),
       execute: async ({ path, frontmatter, replace_section, replace_body, sources, replaced, log_summary }) => {
+        assertSaneKeys(frontmatter);
         await rejectForgotten(kb, frontmatter?.sources, sources);
         // Provenance only grows through patches: new origins append, existing
         // ones survive even if the model sends frontmatter.sources: null.

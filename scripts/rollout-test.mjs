@@ -137,7 +137,7 @@ if (zFile) {
 say("\nSTEP 3: memory_update replaces a fact (supersession)");
 if (zFile) {
   await call("memory_update", {
-    instruction: `The ${T1} staging site moved to https://staging2.zephyr.test. The old address https://staging.zephyr.test is retired. Update the existing ${T1} concept.`,
+    instruction: `The ${T1} staging site moved to https://staging2.zephyr.test. Update the existing ${T1} concept.`,
   });
   const { fm, body } = split(zFile);
   record("3a", "body has the new URL", body.includes("staging2.zephyr.test") ? "PASS" : "FAIL");

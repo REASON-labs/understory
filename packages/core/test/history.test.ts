@@ -130,3 +130,29 @@ describe("write tools record supersessions", () => {
     expect(formatExplanation(x)).toContain('was "old value" (corrected)');
   });
 });
+
+describe("frontmatter key validation", () => {
+  it("rejects malformed keys from small models instead of storing them", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ustory-keys-"));
+    try {
+      const kb = new KnowledgeBase(root);
+      const tools = buildWriteTools(kb, new Set());
+      const exec = (t: { execute?: (...a: never[]) => unknown }, input: unknown) =>
+        (t.execute as unknown as (i: unknown, o: unknown) => Promise<unknown>)(input, {});
+      await expect(
+        exec(tools.write_concept, {
+          path: "/k.md",
+          frontmatter: { type: "note", "resource}: ~/x": "y" },
+          body: "b\n",
+          log_summary: "k",
+        })
+      ).rejects.toThrow(/Invalid frontmatter key/);
+      await exec(tools.write_concept, { path: "/k.md", frontmatter: { type: "note", resource: "ok" }, body: "b\n", log_summary: "k" });
+      await expect(
+        exec(tools.patch_concept, { path: "/k.md", frontmatter: { "bad key": 1 }, log_summary: "k" })
+      ).rejects.toThrow(/Invalid frontmatter key/);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+  });
+});
