@@ -1,0 +1,33 @@
+name: CI
+
+# Test-only. Deliberately separate from docker.yml, whose publish job pushes a
+# container image: this one can run on every branch and PR without publishing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm test
+      # The rollout script is not covered by unit tests; at least keep it parseable.
+      - run: node --check scripts/rollout-test.mjs
