@@ -51,6 +51,8 @@ const kb = new KnowledgeBase(bundleRoot, {
 // Fork default: autocommit on, so readiness is checked unless explicitly disabled.
 if (process.env.GIT_AUTOCOMMIT !== "false") {
   const gitReady = await kb.ensureGitReady();
+  // stderr: stdout is the MCP protocol stream on this transport.
+  if (gitReady.ok && gitReady.note) console.error(`[understory] WARNING: ${gitReady.note}`);
   if (!gitReady.ok) {
     console.error(`[understory] git autocommit is on (the default; set GIT_AUTOCOMMIT=false to disable) but cannot work: ${gitReady.reason}`);
     process.exit(1);

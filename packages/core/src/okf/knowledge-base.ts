@@ -92,7 +92,7 @@ export class KnowledgeBase {
    * loudly on the result. A bundle that isn't a repo yet is initialized with
    * a first commit of the current state — that's what the operator asked for.
    */
-  async ensureGitReady(): Promise<{ ok: boolean; reason?: string }> {
+  async ensureGitReady(): Promise<{ ok: boolean; reason?: string; note?: string }> {
     if (!this.git) return { ok: true }; // autocommit not requested
     const version = await this.git.version().catch(() => ({ installed: false }));
     if (!version.installed) {
@@ -121,6 +121,24 @@ export class KnowledgeBase {
       }
       // Surface identity/ownership problems now, not on the first mutation.
       await this.git.raw(["rev-parse", "--git-dir"]);
+      // A bundle that is a SUBFOLDER of another repository has no history of its
+      // own: every autocommit lands in that repository. Legitimate (a bundle kept
+      // inside a notes repo) but easy to do by accident, e.g. running the README's
+      // BUNDLE_ROOT=./sample-bundle example from inside a clone. Say so; never
+      // refuse, since a deployment may do it on purpose.
+      const top = (await this.git.raw(["rev-parse", "--show-toplevel"]).catch(() => "")).trim();
+      const same = (a: string, b: string) => {
+        const norm = (x: string) => path.resolve(x).replace(/\\/g, "/").replace(/\/+$/, "");
+        return process.platform === "win32" ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b);
+      };
+      if (top && !same(top, this.bundle.root)) {
+        return {
+          ok: true,
+          note:
+            `the bundle at ${this.bundle.root} is inside the git repository at ${top}, so autocommits are made in THAT repository. ` +
+            `If that is not intended, move the bundle out or set GIT_AUTOCOMMIT=false.`,
+        };
+      }
       return { ok: true };
     } catch (err) {
       return { ok: false, reason: (err as Error).message };

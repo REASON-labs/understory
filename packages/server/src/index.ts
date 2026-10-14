@@ -23,6 +23,7 @@ if (!profilesRoot && !bundleRoot) {
 /** Autocommit must be able to work before a memory serves requests (issue #21). */
 async function requireGitReady(kb: KnowledgeBase, label: string): Promise<void> {
   const gitReady = await kb.ensureGitReady();
+  if (gitReady.ok && gitReady.note) console.warn(`[understory] WARNING: ${gitReady.note}`);
   if (!gitReady.ok) {
     throw new Error(
       `git autocommit is on (the default; set GIT_AUTOCOMMIT=false to disable) but cannot work for ${label}: ${gitReady.reason}`

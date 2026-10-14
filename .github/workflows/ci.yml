@@ -29,8 +29,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm test
-      # The rollout script is not covered by unit tests; at least keep it parseable.
-      - run: node --check scripts/rollout-test.mjs
+      # The test scripts are not covered by unit tests; at least keep them parseable.
+      - run: for f in scripts/*.mjs; do node --check "$f"; done
 
   # The image is how this is deployed (`docker compose up --build`). Publishing is
   # tag-only, so without this a broken Dockerfile or lockfile would first show up

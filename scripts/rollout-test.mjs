@@ -426,4 +426,4 @@ if (!keep) {
   fs.rmSync(dest, { recursive: true, force: true });
   say(`Test copy deleted. (Use --keep to retain it.)`);
 }
-process.exit(failed > 0 ? 1 : 0);
+process.exitCode = failed > 0 ? 1 : 0;
