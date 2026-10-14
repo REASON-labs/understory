@@ -394,19 +394,11 @@ merge (see issue #20).
 
 #### Turning it on under Docker
 
-`docker-compose.yml` deliberately does not forward `DREAM_INTERVAL` (dreaming
-spends tokens unattended). Enable it without editing that tracked file, which
-would conflict on the next `git pull`, by adding a
-`docker-compose.override.yml` beside it. Compose merges it automatically:
-
-```yaml
-services:
-  understory:
-    environment:
-      DREAM_INTERVAL: 6h
-      # DREAM_SIGNALS: orphans,links,oversized,insights
-      # DREAM_MAX_CHANGES: "15"
-```
+Set `DREAM_INTERVAL` (e.g. `6h`) in `.env` and recreate the container
+(`docker compose up -d`). Both compose files forward it, along with
+`DREAM_SIGNALS`, `DREAM_INSIGHTS` and `DREAM_MAX_CHANGES`; it is off unless set, since dreaming
+spends tokens with nobody watching. The startup log confirms it:
+`dreaming: every 6h — signals: ...`.
 
 **Note:** a dream holds the exclusive bundle write lock for its whole run, so
 user mutations queue behind it. At a 6h interval on a personal bundle this is
@@ -541,8 +533,8 @@ Rolling back code: `git checkout <previous commit> && docker compose up -d --bui
 Rolling back content: the bundle is its own git repo (`GIT_AUTOCOMMIT`), so
 `git -C "$BUNDLE_PATH" log` / `revert` undoes individual runs.
 
-Keep local deployment tweaks in `.env` and `docker-compose.override.yml`, never in
-tracked files, so `git pull` never conflicts.
+Keep local deployment settings in `.env` (and any compose changes in a
+`docker-compose.override.yml`), never in tracked files, so `git pull` never conflicts.
 
 ## Environment
 
@@ -563,5 +555,5 @@ setting from `.env`; an empty value means "use the default".
 | `AGENT_MAX_STEPS` | `12` | Steps per agent run |
 | `QUERY_CACHE` / `QUERY_CACHE_TTL` | `true` / `24h` | Repeated-query cache |
 | `HOT_MEMORY` / `HOT_MEMORY_TTL` | `true` / `1h` | Recent working set checked before a full run |
-| `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation); not forwarded by `docker-compose.yml` |
-| `DREAM_MAX_CHANGES` | `15` | Concepts one dream may change before it is rolled back; same forwarding as above |
+| `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation) |
+| `DREAM_MAX_CHANGES` | `15` | Concepts one dream may change before it is rolled back |
