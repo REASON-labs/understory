@@ -12,5 +12,11 @@ export { lintBundle } from "./lint.js";
 export type { LintReport, LintFinding, BrokenLink } from "./lint.js";
 export { buildGraph, scanGraph } from "./graph.js";
 export type { GraphData, GraphNode, GraphEdge } from "./graph.js";
-export { KnowledgeBase, type KnowledgeBaseOptions, type RollbackReport } from "./knowledge-base.js";
+export {
+  KnowledgeBase,
+  type CommitSummary,
+  type KnowledgeBaseOptions,
+  type RollbackReport,
+  type RunScope,
+} from "./knowledge-base.js";
 export { Journal } from "./journal.js";

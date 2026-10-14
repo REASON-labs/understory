@@ -41,7 +41,7 @@ services:
       QUERY_CACHE_TTL: ${QUERY_CACHE_TTL:-}
       HOT_MEMORY: ${HOT_MEMORY:-}
       HOT_MEMORY_TTL: ${HOT_MEMORY_TTL:-}
-      # DREAM_INTERVAL / DREAM_SIGNALS are intentionally not forwarded here:
+      # DREAM_INTERVAL / DREAM_SIGNALS / DREAM_MAX_CHANGES are intentionally not forwarded here:
       # dreaming spends tokens unattended. To enable it without editing this
       # tracked file (which would conflict on the next git pull), put them in a
       # docker-compose.override.yml next to it; compose merges that automatically.

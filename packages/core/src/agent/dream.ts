@@ -29,6 +29,20 @@ export const DEFAULT_DREAM_SIGNALS: DreamSignalKind[] = [
   "insights",
 ];
 
+/**
+ * Every git commit a dream makes starts with this, so a dream's changes can be
+ * listed (`git log --grep '^dream:'`) and reverted as a group.
+ */
+export const DREAM_COMMIT_PREFIX = "dream:";
+
+/**
+ * Default cap on concepts one dream may change (issue #20). The largest
+ * legitimate pass is a few oversized splits (hub + extracted concepts each,
+ * at most three splits per dream) plus some orphan wiring; much beyond that
+ * is a model rewriting the memory, which is what this guards against.
+ */
+export const DEFAULT_DREAM_MAX_CHANGES = 15;
+
 export interface DreamSignal {
   kind: DreamSignalKind;
   /** How many items triggered it — the cheap "is anything pending" number. */
@@ -47,8 +61,15 @@ export interface DreamReport {
   signals?: DreamSignal[];
   /** Signals suppressed by DREAM_SIGNALS, with their counts. */
   suppressed?: { kind: DreamSignalKind; count: number }[];
-  /** Outcome of the underlying mutation, when one ran. */
-  outcome?: "success" | "rolled_back" | "partial" | "failed";
+  /**
+   * Outcome of the underlying mutation, when one ran. `too_broad`: it changed
+   * more concepts than DREAM_MAX_CHANGES and was rolled back entirely.
+   */
+  outcome?: "success" | "rolled_back" | "too_broad" | "partial" | "failed";
+  /** Git commits the dream made, oldest first (success only; empty without GIT_AUTOCOMMIT). */
+  commits?: string[];
+  /** The change budget this pass ran under. */
+  maxChanges?: number;
 }
 
 export interface DreamOptions extends AgentOptions {
@@ -96,6 +117,26 @@ export function resolveDreamSignals(env: NodeJS.ProcessEnv = process.env): Set<D
   return new Set(enabled);
 }
 
+/**
+ * The per-dream change budget from DREAM_MAX_CHANGES. An unparseable value
+ * falls back to the default with a warning, never to "unlimited".
+ */
+export function resolveDreamMaxChanges(env: NodeJS.ProcessEnv = process.env): {
+  limit: number;
+  warning?: string;
+} {
+  const raw = env.DREAM_MAX_CHANGES;
+  if (raw === undefined || raw.trim() === "") return { limit: DEFAULT_DREAM_MAX_CHANGES };
+  const n = Number(raw.trim());
+  if (!Number.isInteger(n) || n < 1) {
+    return {
+      limit: DEFAULT_DREAM_MAX_CHANGES,
+      warning: `DREAM_MAX_CHANGES="${raw}" is not a positive whole number — using ${DEFAULT_DREAM_MAX_CHANGES}`,
+    };
+  }
+  return { limit: n };
+}
+
 export interface DuplicateCandidate {
   a: string;
   b: string;
@@ -137,8 +178,13 @@ export async function runDream(
     };
   }
 
-  const result = await runner(kb, buildDreamInstruction(signals), options);
-  return { ran: true, signals, suppressed, ...normalizeMutation(result) };
+  const maxChanges = options.maxConceptsChanged ?? resolveDreamMaxChanges().limit;
+  const result = await runner(kb, buildDreamInstruction(signals, maxChanges), {
+    ...options,
+    commitPrefix: DREAM_COMMIT_PREFIX,
+    maxConceptsChanged: maxChanges,
+  });
+  return { ran: true, signals, suppressed, maxChanges, ...normalizeMutation(result) };
 }
 
 /**
@@ -226,12 +272,18 @@ export async function detectSignals(
   };
 }
 
-export function buildDreamInstruction(signals: DreamSignal[]): string {
+export function buildDreamInstruction(signals: DreamSignal[], maxChanges?: number): string {
+  const budget =
+    maxChanges === undefined
+      ? ""
+      : ` CHANGE BUDGET: change at most ${maxChanges} concepts in this run (creating, editing ` +
+        `and deleting all count). A run that changes more is discarded in full, so if the ` +
+        `items above need more, do the most valuable ones and leave the rest for a later run.`;
   return (
     `DREAM: autonomous memory consolidation (maintenance run, no user waiting).\n\n` +
     signals.map((s) => s.instruction).join("\n\n") +
     `\n\nWork through the applicable items above. Be conservative: prefer small, clearly ` +
-    `justified edits over sweeping rewrites. Summarize exactly what changed.`
+    `justified edits over sweeping rewrites.${budget} Summarize exactly what changed.`
   );
 }
 
@@ -244,12 +296,28 @@ function normalizeMutation(result: unknown): {
   summary: string;
   filesChanged: string[];
   outcome: DreamReport["outcome"];
+  commits?: string[];
 } {
   const r = result as Record<string, unknown>;
   if (r && typeof r === "object" && "ok" in r) {
     if (r.ok === true) {
-      const inner = r.result as { summary: string; filesChanged: string[] };
-      return { summary: inner.summary, filesChanged: inner.filesChanged, outcome: "success" };
+      const inner = r.result as { summary: string; filesChanged: string[]; commits?: string[] };
+      return {
+        summary: inner.summary,
+        filesChanged: inner.filesChanged,
+        outcome: "success",
+        commits: inner.commits ?? [],
+      };
+    }
+    const tooBroad = r.tooBroad as { changed: string[]; limit: number } | undefined;
+    if (r.status === "rolled_back" && tooBroad) {
+      return {
+        summary:
+          `dream rolled back as too broad: it changed ${tooBroad.changed.length} concepts, over ` +
+          `DREAM_MAX_CHANGES=${tooBroad.limit}. Nothing was kept. Changed: ${tooBroad.changed.join(", ")}`,
+        filesChanged: [],
+        outcome: "too_broad",
+      };
     }
     const status = String(r.status ?? "failed") as DreamReport["outcome"];
     // A rolled-back dream is a materially different event from a partial one:

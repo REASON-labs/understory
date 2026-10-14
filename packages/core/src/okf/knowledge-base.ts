@@ -36,6 +36,26 @@ interface TransactionContext {
 }
 
 /**
+ * Bookkeeping for one agent run, independent of whether it is transactional:
+ * which concepts it touched and which git commits it made. A dream sets
+ * `commitPrefix` so its commits can be found (and reverted) as a group.
+ */
+export interface RunScope {
+  /** Prepended to every commit message made inside the scope, e.g. "dream:". */
+  commitPrefix?: string;
+  /** Concept paths written, patched or deleted inside the scope. */
+  touched: Set<string>;
+  /** Commits made inside the scope, oldest first (full hashes). */
+  commits: string[];
+}
+
+export interface CommitSummary {
+  commit: string;
+  date: string;
+  message: string;
+}
+
+/**
  * The one write-path into the bundle. Spec conformance (index.md, log.md,
  * frontmatter validation, timestamps) is enforced HERE, deterministically —
  * never delegated to the LLM. Mutations are serialized through a queue.
@@ -58,6 +78,8 @@ export class KnowledgeBase {
    * SDK and have no way to be handed a transaction object explicitly.
    */
   private readonly txContext = new AsyncLocalStorage<TransactionContext>();
+  /** The open RunScope, carried the same way as txContext. */
+  private readonly runScope = new AsyncLocalStorage<RunScope>();
 
   constructor(bundleRoot: string, private readonly options: KnowledgeBaseOptions = {}) {
     this.bundle = new Bundle(bundleRoot);
@@ -153,6 +175,43 @@ export class KnowledgeBase {
     }
   }
 
+  /**
+   * Commits whose message starts with `prefix`, newest first. Empty when
+   * autocommit is off. Survives restarts, unlike the dreamer's run history.
+   */
+  async commitsWithPrefix(prefix: string, limit = 20): Promise<CommitSummary[]> {
+    if (!this.git) return [];
+    try {
+      const out = await this.git.raw([
+        "log",
+        "--fixed-strings",
+        `--grep=${prefix}`,
+        `-n${limit * 4}`,
+        "--format=%H%x09%aI%x09%s",
+      ]);
+      return out
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [commit, date, ...rest] = line.split("\t");
+          return { commit, date, message: rest.join("\t") };
+        })
+        // --grep matches anywhere in the message; only the prefix counts.
+        .filter((c) => c.message.startsWith(prefix))
+        .slice(0, limit);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Run `fn` with a RunScope: every write inside records the concept it
+   * touched, and every commit inside gets the scope's prefix and is collected.
+   */
+  withRunScope<T>(scope: RunScope, fn: () => Promise<T>): Promise<T> {
+    return this.runScope.run(scope, fn);
+  }
+
   /** Drop log.md bullets linking to these concepts (forget). Run under the write lock. */
   scrubLog(conceptPaths: string[]): Promise<void> {
     return this.enqueue(() => scrubLog(this.bundle, conceptPaths));
@@ -165,7 +224,7 @@ export class KnowledgeBase {
       try {
         await this.git.add(".");
         const status = await this.git.status();
-        if (!status.isClean()) await this.git.commit(`update: ${message}`);
+        if (!status.isClean()) await this.commit(`update: ${message}`);
       } catch (err) {
         console.error(`[understory] git commit failed: ${(err as Error).message}`);
       }
@@ -234,9 +293,7 @@ export class KnowledgeBase {
     if (this.git && restored.length > 0) {
       try {
         await this.git.add(".");
-        await this.git.commit(
-          `revert: roll back failed mutation (${restored.length} file(s))`
-        );
+        await this.commit(`revert: roll back failed mutation (${restored.length} file(s))`);
       } catch (err) {
         console.error(`[understory] rollback commit failed: ${(err as Error).message}`);
       }
@@ -327,14 +384,22 @@ export class KnowledgeBase {
     await regenerateIndexChain(this.bundle, path.posix.dirname(conceptPath));
     const linked = `[${conceptPath.split("/").pop()}](${conceptPath})`;
     await appendLog(this.bundle, action, logSummary || `${action} of ${linked}.`);
+    this.runScope.getStore()?.touched.add(conceptPath);
     if (this.git) {
       try {
         await this.git.add(".");
-        await this.git.commit(`${action.toLowerCase()}: ${logSummary || conceptPath}`);
+        await this.commit(`${action.toLowerCase()}: ${logSummary || conceptPath}`);
       } catch (err) {
         // Autocommit is best-effort; the KB write itself already succeeded.
         console.error(`[understory] git autocommit failed: ${(err as Error).message}`);
       }
     }
+  }
+
+  /** Commit staged changes, applying and recording the open RunScope. Caller has a git. */
+  private async commit(message: string): Promise<void> {
+    const scope = this.runScope.getStore();
+    const result = await this.git!.commit(scope?.commitPrefix ? `${scope.commitPrefix} ${message}` : message);
+    if (scope && result.commit) scope.commits.push(result.commit);
   }
 }

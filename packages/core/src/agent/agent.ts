@@ -1,5 +1,5 @@
 import { generateText, streamText, stepCountIs, type LanguageModel, type ModelMessage } from "ai";
-import type { KnowledgeBase, RollbackReport } from "../okf/index.js";
+import type { KnowledgeBase, RollbackReport, RunScope } from "../okf/index.js";
 import {
   createModel,
   resolveFallbackConfig,
@@ -32,6 +32,26 @@ export interface AgentOptions {
    * interactive default.
    */
   maxSteps?: number;
+  /** Mutation only: prefix for every git commit the run makes (the dreamer uses "dream:"). */
+  commitPrefix?: string;
+  /**
+   * Mutation only: a run that changes more concepts than this is rolled back
+   * as too broad (issue #20). Unset means no limit.
+   */
+  maxConceptsChanged?: number;
+}
+
+/** Thrown inside the mutation transaction so an over-budget run rolls back. */
+class TooBroadError extends Error {
+  constructor(
+    readonly changed: string[],
+    readonly limit: number
+  ) {
+    super(
+      `Too broad: the run changed ${changed.length} concepts, over the limit of ${limit}.`
+    );
+    this.name = "TooBroadError";
+  }
 }
 
 export interface QueryResult {
@@ -47,6 +67,8 @@ export interface MutationResult {
   filesChanged: string[];
   steps: number;
   traceId: string;
+  /** Git commits the run made, oldest first. Empty without GIT_AUTOCOMMIT. */
+  commits: string[];
 }
 
 export type MutationOutcome =
@@ -62,6 +84,8 @@ export type MutationOutcome =
       filesReverted: string[];
       error: string;
       traceId: string;
+      /** Set when the run was rolled back for exceeding maxConceptsChanged. */
+      tooBroad?: { changed: string[]; limit: number };
     }
   /**
    * The run left files changed that were not undone: it hit the step limit
@@ -296,11 +320,13 @@ export async function runMutation(
   const filesChanged = new Set<string>();
   const maxSteps = effectiveMaxSteps(options);
   let modelChain: string[] = [];
+  const scope: RunScope = { commitPrefix: options.commitPrefix, touched: new Set(), commits: [] };
+  const limit = options.maxConceptsChanged;
 
   const runAgent = async () => {
     const resolved = await resolveAgentModel(options, "mutate");
     modelChain = resolved.modelChain;
-    return generateText({
+    const result = await generateText({
       model: resolved.model,
       abortSignal: modelAbortSignal(options),
       system: buildSystemPrompt(ctx),
@@ -309,12 +335,22 @@ export async function runMutation(
       stopWhen: stepCountIs(maxSteps),
       temperature: 0.2,
     });
+    // Checked after the run, inside the transaction, so throwing undoes all
+    // of it. Stopping at the limit instead would keep a half-done edit (a
+    // split whose hub was never rewritten). Counted from the KB, not the
+    // tool tracker, so every concept write is seen.
+    if (limit !== undefined && scope.touched.size > limit) {
+      throw new TooBroadError([...scope.touched].sort(), limit);
+    }
+    return result;
   };
 
   try {
     // The whole agent loop is one transaction: a model that dies at step 7
     // of 12 must not leave the first six writes behind.
-    const result = rollbackEnabled() ? await kb.transaction(runAgent) : await runAgent();
+    const result = await kb.withRunScope(scope, () =>
+      rollbackEnabled() ? kb.transaction(runAgent) : runAgent()
+    );
     if (hitStepLimit(result, maxSteps)) {
       // A step-limit stop does not throw, so the transaction commits what was
       // written. Report it as partial so a half-formed edit is not "success".
@@ -347,10 +383,11 @@ export async function runMutation(
         filesChanged: [...filesChanged].sort(),
         steps: result.steps.length,
         traceId: trace.id,
+        commits: scope.commits,
       },
     };
   } catch (err) {
-    const files = [...filesChanged].sort();
+    const files = [...new Set([...filesChanged, ...scope.touched])].sort();
     const message = errorMessage(err);
     const rollback = (err as Error & { rollback?: RollbackReport }).rollback;
 
@@ -371,6 +408,7 @@ export async function runMutation(
         filesReverted: reverted,
         error: message,
         traceId: trace.id,
+        ...(err instanceof TooBroadError ? { tooBroad: { changed: err.changed, limit: err.limit } } : {}),
       };
     }
 

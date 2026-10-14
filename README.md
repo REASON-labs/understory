@@ -348,15 +348,49 @@ curl localhost:3800/api/dream/status
 prompt text each contributes, plus anything suppressed by `DREAM_SIGNALS` —
 so you can see what turning `duplicates` on would pick up before turning it on.
 
-`status` returns the resolved schedule and signal set, the next run time, and
-the last 20 runs with outcome, duration, and files changed. History is
+`status` returns the resolved schedule, signal set and change budget, the next
+run time, and the last 20 runs with outcome, duration, files changed, and (for
+a run that kept changes) its commits and a `revertCommand`. Run history is
 in-memory and resets with the process, by design: it describes this process's
 behaviour, and a stale history read off disk after a restart would mislead.
+`commits` lists the memory's last 20 dream commits straight from git, so it
+does survive restarts.
 
 A dream that fails is logged to stderr, and its outcome is recorded — including
-`rolled_back`, which means it failed and the bundle was fully restored. That is
-a materially different event from `partial`, which means rollback itself failed
-and a human needs to look.
+`rolled_back`, which means it failed and the bundle was fully restored, and
+`too_broad` (below). Both are materially different events from `partial`, which
+means rollback itself failed and a human needs to look.
+
+#### Guardrails: change budget and undo
+
+A dream may change at most `DREAM_MAX_CHANGES` concepts (default **15**;
+creating, editing and deleting all count, a concept edited twice counts once).
+The model is told the budget up front. A run that goes over it anyway is
+rolled back **in full** and recorded as `too_broad`, with the concepts it
+touched listed in the summary: a half-applied consolidation (say, a split whose
+hub was never rewritten) is worse than none. An invalid value falls back to the
+default with a warning, never to "unlimited". With `MUTATION_ROLLBACK=false`
+nothing can be rolled back, so an over-budget run is reported as `partial`.
+
+Every commit a dream makes starts with `dream:` (including the `dream: revert:`
+of a rolled-back run), so its changes are easy to find:
+
+```bash
+git -C "$BUNDLE_PATH" log --oneline --grep '^dream:'
+```
+
+A dream holds the bundle write lock for its whole run, so its commits are
+contiguous and one range revert undoes exactly that run. The `revertCommand` in
+`/api/dream/status` is that command. Under Docker, run it in the container (it
+has git configured for the bundle; the host's git may refuse the root-owned
+files), ideally while no dream or mutation is running:
+
+```bash
+docker compose exec understory git -C /bundle revert --no-edit <first>^..<last>
+```
+
+Not covered yet: a review mode where dreams land on a branch for a human to
+merge (see issue #20).
 
 #### Turning it on under Docker
 
@@ -371,6 +405,7 @@ services:
     environment:
       DREAM_INTERVAL: 6h
       # DREAM_SIGNALS: orphans,links,oversized,insights
+      # DREAM_MAX_CHANGES: "15"
 ```
 
 **Note:** a dream holds the exclusive bundle write lock for its whole run, so
@@ -485,7 +520,7 @@ Compared with [upstream](https://github.com/thecodacus/understory):
 | Provenance | Per-fact `sources`, capped `history` of superseded facts, `memory_explain`, `memory_forget` with tombstones ([Provenance](#provenance)) |
 | Security | CORS locked to same-origin unless `CORS_ORIGINS` is set; `AUTH_REQUIRED=true` refuses to start without `AUTH_TOKEN` |
 | Config | Single `LLM_API_*` provider config (legacy per-provider keys removed); `HOST` bind address; `BUNDLE_PATH` for the compose mount |
-| Dreaming | Per-signal control (`DREAM_SIGNALS`), `/api/dream/preview` and `/api/dream/status` |
+| Dreaming | Per-signal control (`DREAM_SIGNALS`), change budget with full rollback (`DREAM_MAX_CHANGES`), `dream:`-prefixed commits with a one-command revert, `/api/dream/preview` and `/api/dream/status` |
 | Ops | `/health`, `scripts/rollout-test.mjs`, recall benchmark (`pnpm bench:recall`) |
 
 Upstream changes are merged in periodically (`git fetch upstream && git merge upstream/main`).
@@ -529,3 +564,4 @@ setting from `.env`; an empty value means "use the default".
 | `QUERY_CACHE` / `QUERY_CACHE_TTL` | `true` / `24h` | Repeated-query cache |
 | `HOT_MEMORY` / `HOT_MEMORY_TTL` | `true` / `1h` | Recent working set checked before a full run |
 | `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation); not forwarded by `docker-compose.yml` |
+| `DREAM_MAX_CHANGES` | `15` | Concepts one dream may change before it is rolled back; same forwarding as above |
