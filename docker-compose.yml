@@ -37,4 +37,12 @@ services:
       LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
       LOCAL_API_KEY: ${LOCAL_API_KEY:-}
       GIT_AUTOCOMMIT: ${GIT_AUTOCOMMIT:-true}
+      # Documented in .env.example but previously not forwarded, so setting them
+      # in .env had no effect in the container. Empty means "use the default".
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-}
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-}
+      MUTATION_ROLLBACK: ${MUTATION_ROLLBACK:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # DREAM_INTERVAL / DREAM_SIGNALS are intentionally not forwarded here:
+      # dreaming spends tokens unattended, so enable it by adding them yourself.
     restart: unless-stopped
