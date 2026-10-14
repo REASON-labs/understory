@@ -1,9 +1,13 @@
 # Portainer stack — pulls the prebuilt image from GHCR (no build step).
 # Point Portainer at this file (Stacks → Add stack → Repository) and set
 # the LLM env vars in the stack's environment variables UI.
+#
+# The image is this fork's, published only when a v* tag is pushed (see
+# .github/workflows/docker.yml), so :latest is the newest release, not main.
+# To run unreleased main, use docker-compose.yml, which builds from source.
 services:
   understory:
-    image: ghcr.io/thecodacus/understory:latest
+    image: ghcr.io/reason-labs/understory:latest
     ports:
       - "3800:3800"
     # Lets the container reach a llama.cpp server running on the host via
@@ -17,6 +21,7 @@ services:
     environment:
       BUNDLE_ROOT: /bundle
       AUTH_TOKEN: ${AUTH_TOKEN:-}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-}
       # Profiles (several isolated memories, one API key each): mount a volume
       # at /profiles and uncomment. See "Profiles" in the README.
       #PROFILES_ROOT: /profiles
@@ -32,20 +37,22 @@ services:
       LLM_FALLBACK_API_FORMAT: ${LLM_FALLBACK_API_FORMAT:-openai}
       LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-}
       LLM_FALLBACK_ALLOW_FOR: ${LLM_FALLBACK_ALLOW_FOR:-query}
+      LLM_FALLBACK_RETRY_429: ${LLM_FALLBACK_RETRY_429:-}
       GIT_AUTOCOMMIT: ${GIT_AUTOCOMMIT:-true}
-      MUTATION_ROLLBACK: ${MUTATION_ROLLBACK:-true}
-      DREAM_INTERVAL: ${DREAM_INTERVAL:-6h}
+      # Empty means "use the default" (see .env.example for each one).
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-}
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-}
+      MUTATION_ROLLBACK: ${MUTATION_ROLLBACK:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      QUERY_CACHE: ${QUERY_CACHE:-}
+      QUERY_CACHE_TTL: ${QUERY_CACHE_TTL:-}
+      HOT_MEMORY: ${HOT_MEMORY:-}
+      HOT_MEMORY_TTL: ${HOT_MEMORY_TTL:-}
+      # Dreaming spends tokens unattended, so it is opt-in: off unless
+      # DREAM_INTERVAL (e.g. 6h) is set in the stack's environment.
+      DREAM_INTERVAL: ${DREAM_INTERVAL:-}
       DREAM_SIGNALS: ${DREAM_SIGNALS:-}
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:3800/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
+      DREAM_INSIGHTS: ${DREAM_INSIGHTS:-}
     restart: unless-stopped
 
 volumes:
