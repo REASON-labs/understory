@@ -1,6 +1,13 @@
 import { useState } from "react";
 import type { TreeNode } from "../api";
 
+/**
+ * Generated per-directory index.md files are hidden: each one only lists what
+ * the tree already shows. They are still reachable from directory links in
+ * concepts. log.md stays (it opens the Log view).
+ */
+const isHidden = (n: TreeNode) => n.kind === "reserved" && n.name === "index.md";
+
 export function Tree({
   node,
   selected,
@@ -14,7 +21,7 @@ export function Tree({
 }) {
   return (
     <div>
-      {(node.children ?? []).map((child) =>
+      {(node.children ?? []).filter((child) => !isHidden(child)).map((child) =>
         child.kind === "directory" ? (
           <DirNode key={child.path} node={child} selected={selected} onSelect={onSelect} depth={depth} />
         ) : (
