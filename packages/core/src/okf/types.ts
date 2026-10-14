@@ -8,6 +8,12 @@ export interface ConceptFrontmatter {
   timestamp?: string;
   /** Provenance list, see sources.ts. Preserved across edits. */
   sources?: import("./sources.js").ConceptSource[];
+  /**
+   * True for a machine-written synthesis of other concepts (an overview a dream
+   * wrote), not primary knowledge. Ranks below primary concepts in search and is
+   * never used as input to further synthesis. Its `sources` name what it summarises.
+   */
+  derived?: boolean;
   /** Capped trail of facts this concept replaced, see history.ts. Preserved across edits. */
   history?: import("./history.js").Supersession[];
   /** Producer-defined keys are permitted and preserved. */
@@ -41,6 +47,8 @@ export interface SearchHit {
   /** Snippet of body text around the first match, if the match was in the body. */
   snippet?: string;
   score: number;
+  /** True when the concept is a derived synthesis (ranked below primary ones). */
+  derived?: boolean;
 }
 
 export type LogAction = "Creation" | "Update" | "Deletion";

@@ -10,6 +10,7 @@ import { withFallback } from "../providers/fallback.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildReadTools, buildWriteTools, formatTree, type QueryScope } from "./tools.js";
 import { TraceRecorder, TraceStore, type TraceUsage } from "./trace.js";
+import type { RunInfo } from "./dream-verify.js";
 import { parseDuration } from "../util/duration.js";
 
 const DEFAULT_MAX_STEPS = 12;
@@ -39,6 +40,25 @@ export interface AgentOptions {
    * as too broad (issue #20). Unset means no limit.
    */
   maxConceptsChanged?: number;
+  /**
+   * Mutation only: after the agent finishes, INSIDE the transaction, return the
+   * reasons this run must not be kept. Any reason rolls the whole run back
+   * (issue #19). Gets the knowledge base the run used (a review dream runs on a
+   * worktree) and what the run did to it.
+   */
+  verifyRun?: (kb: KnowledgeBase, run: RunInfo) => Promise<string[]>;
+  /**
+   * Mutation only: a run cut off by the step limit is rolled back instead of
+   * kept as "partial". For unattended runs: nobody is there to review a
+   * half-formed edit.
+   */
+  rollbackOnStepLimit?: boolean;
+  /**
+   * Mutation only: concepts this run creates are stamped `derived: true` and
+   * cite the concepts they link to (issue #17). For runs whose only job is to
+   * synthesize overviews.
+   */
+  deriveNewConcepts?: boolean;
 }
 
 /** Thrown inside the mutation transaction so an over-budget run rolls back. */
@@ -51,6 +71,22 @@ class TooBroadError extends Error {
       `Too broad: the run changed ${changed.length} concepts, over the limit of ${limit}.`
     );
     this.name = "TooBroadError";
+  }
+}
+
+/** Thrown inside the mutation transaction so a step-limited unattended run rolls back. */
+class StepLimitRollback extends Error {
+  constructor(readonly limit: number) {
+    super(`The run used all ${limit} steps and was stopped before it finished; it was rolled back.`);
+    this.name = "StepLimitRollback";
+  }
+}
+
+/** Thrown inside the mutation transaction when verifyRun rejects the run. */
+class UnverifiedError extends Error {
+  constructor(readonly failures: string[]) {
+    super(`Verification failed (${failures.length}): ${failures.join("; ")}`);
+    this.name = "UnverifiedError";
   }
 }
 
@@ -86,6 +122,10 @@ export type MutationOutcome =
       traceId: string;
       /** Set when the run was rolled back for exceeding maxConceptsChanged. */
       tooBroad?: { changed: string[]; limit: number };
+      /** Set when an unattended run was rolled back for hitting the step limit. */
+      stepLimited?: { limit: number };
+      /** Set when the run was rolled back because verifyRun rejected it. */
+      unverified?: string[];
     }
   /**
    * The run left files changed that were not undone: it hit the step limit
@@ -326,21 +366,39 @@ export async function runMutation(
   const runAgent = async () => {
     const resolved = await resolveAgentModel(options, "mutate");
     modelChain = resolved.modelChain;
+    const before = options.verifyRun ? new Set(await kb.bundle.listConceptPaths()) : null;
     const result = await generateText({
       model: resolved.model,
       abortSignal: modelAbortSignal(options),
       system: buildSystemPrompt(ctx),
       prompt: instruction,
-      tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
+      tools: {
+        ...buildReadTools(kb, recorder),
+        ...buildWriteTools(kb, filesChanged, recorder, { deriveNew: options.deriveNewConcepts }),
+      },
       stopWhen: stepCountIs(maxSteps),
       temperature: 0.2,
     });
+    // An unattended run that ran out of steps has half-done work in it.
+    if (options.rollbackOnStepLimit && hitStepLimit(result, maxSteps)) {
+      throw new StepLimitRollback(maxSteps);
+    }
     // Checked after the run, inside the transaction, so throwing undoes all
     // of it. Stopping at the limit instead would keep a half-done edit (a
     // split whose hub was never rewritten). Counted from the KB, not the
     // tool tracker, so every concept write is seen.
     if (limit !== undefined && scope.touched.size > limit) {
       throw new TooBroadError([...scope.touched].sort(), limit);
+    }
+    if (options.verifyRun && before) {
+      const existing = new Set(await kb.bundle.listConceptPaths());
+      const touched = [...scope.touched].sort();
+      const failures = await options.verifyRun(kb, {
+        touched,
+        created: touched.filter((p) => existing.has(p) && !before.has(p)),
+        deleted: touched.filter((p) => !existing.has(p) && before.has(p)),
+      });
+      if (failures.length > 0) throw new UnverifiedError(failures);
     }
     return result;
   };
@@ -354,7 +412,9 @@ export async function runMutation(
     if (hitStepLimit(result, maxSteps)) {
       // A step-limit stop does not throw, so the transaction commits what was
       // written. Report it as partial so a half-formed edit is not "success".
-      const files = [...filesChanged].sort();
+      // Counted from the KB as well as the tool tracker, like the success path:
+      // a write the tracker missed must not turn a partial edit into "failed".
+      const files = [...new Set([...filesChanged, ...scope.touched])].sort();
       const message =
         `The run used all ${maxSteps} steps and was stopped before it finished` +
         (files.length > 0 ? "; the files it changed may be incomplete" : " or changed any file") +
@@ -409,6 +469,8 @@ export async function runMutation(
         error: message,
         traceId: trace.id,
         ...(err instanceof TooBroadError ? { tooBroad: { changed: err.changed, limit: err.limit } } : {}),
+        ...(err instanceof StepLimitRollback ? { stepLimited: { limit: err.limit } } : {}),
+        ...(err instanceof UnverifiedError ? { unverified: err.failures } : {}),
       };
     }
 

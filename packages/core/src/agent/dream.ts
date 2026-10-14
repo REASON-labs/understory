@@ -1,6 +1,7 @@
 import type { KnowledgeBase } from "../okf/index.js";
 import type { GraphNode } from "../okf/graph.js";
 import { runMutation, type AgentOptions } from "./agent.js";
+import { baselineBrokenLinks, verifyDreamRun } from "./dream-verify.js";
 import {
   DREAM_COMMIT_PREFIX,
   DreamReviews,
@@ -68,7 +69,7 @@ export interface DreamReport {
    * Outcome of the underlying mutation, when one ran. `too_broad`: it changed
    * more concepts than DREAM_MAX_CHANGES and was rolled back entirely.
    */
-  outcome?: "success" | "rolled_back" | "too_broad" | "partial" | "failed";
+  outcome?: "success" | "rolled_back" | "too_broad" | "unverified" | "partial" | "failed";
   /** Git commits the dream made, oldest first (success only; empty without GIT_AUTOCOMMIT). */
   commits?: string[];
   /** The change budget this pass ran under. */
@@ -188,7 +189,24 @@ export async function runDream(
   const mode = options.mode ?? resolveDreamMode();
   const maxChanges = options.maxConceptsChanged ?? resolveDreamMaxChanges().limit;
   const instruction = buildDreamInstruction(signals, maxChanges);
-  const runOptions = { ...options, commitPrefix: DREAM_COMMIT_PREFIX, maxConceptsChanged: maxChanges };
+  // An unattended run is checked before it commits (issue #19) and, if it runs out
+  // of steps, undone rather than kept half-done. A run whose only job is the
+  // insights overview creates only derived concepts (issue #17); otherwise the
+  // model marks the overview itself and the verifier insists derived concepts
+  // cite what they came from. DREAM_VERIFY=false turns the checks off.
+  const verify = process.env.DREAM_VERIFY?.trim().toLowerCase() !== "false";
+  const baselineBroken = verify ? await baselineBrokenLinks(kb) : new Set<string>();
+  const allowDelete = signals.some((s) => s.kind === "duplicates");
+  const runOptions: AgentOptions = {
+    ...(verify
+      ? { verifyRun: (k, run) => verifyDreamRun(k, run, { allowDelete, baselineBroken }) }
+      : {}),
+    rollbackOnStepLimit: true,
+    deriveNewConcepts: signals.every((s) => s.kind === "insights"),
+    ...options,
+    commitPrefix: DREAM_COMMIT_PREFIX,
+    maxConceptsChanged: maxChanges,
+  };
 
   if (mode === "apply") {
     const result = await runner(kb, instruction, runOptions);
@@ -251,6 +269,7 @@ export async function detectSignals(
     oversizedConcepts(kb),
   ]);
   const dupes = duplicateCandidates(graph.nodes);
+  const recent = await withoutDerived(kb, log);
 
   const all: DreamSignal[] = [];
 
@@ -299,16 +318,17 @@ export async function detectSignals(
         fat.map((f) => `- ${f.path} (${f.chars} chars, ${f.sections} sections)`).join("\n"),
     });
   }
-  if (log.length >= 5) {
+  if (recent.length >= 5) {
     all.push({
       kind: "insights",
-      count: log.length,
+      count: recent.length,
       instruction:
         `CONSOLIDATION (optional). Review the recent activity below. If several concepts now ` +
         `describe one theme that has no overview concept, create ONE overview concept that ` +
-        `summarizes and links them (and back-link per the rules). If nothing meaningful ` +
+        `summarizes and links them (and back-link per the rules), and pass derived=true when you ` +
+        `write it, since it is a synthesis and not primary knowledge. If nothing meaningful ` +
         `emerges, skip this — do not force an insight.\n` +
-        log.slice(0, 10).map((e) => `- ${e.date} ${e.action}: ${e.summary}`).join("\n"),
+        recent.slice(0, 10).map((e) => `- ${e.date} ${e.action}: ${e.summary}`).join("\n"),
     });
   }
 
@@ -365,6 +385,26 @@ function normalizeMutation(result: unknown): {
           `DREAM_MAX_CHANGES=${tooBroad.limit}. Nothing was kept. Changed: ${tooBroad.changed.join(", ")}`,
         filesChanged: [],
         outcome: "too_broad",
+      };
+    }
+    const unverified = r.unverified as string[] | undefined;
+    if (r.status === "rolled_back" && unverified?.length) {
+      return {
+        summary:
+          `dream rolled back: it failed verification (${unverified.length}). Nothing was kept. ` +
+          unverified.map((f) => `- ${f}`).join("\n"),
+        filesChanged: [],
+        outcome: "unverified",
+      };
+    }
+    const stepLimited = r.stepLimited as { limit: number } | undefined;
+    if (r.status === "rolled_back" && stepLimited) {
+      return {
+        summary:
+          `dream used all ${stepLimited.limit} steps and was rolled back; nothing was kept. ` +
+          `Raise AGENT_MAX_STEPS if dreams routinely need more room.`,
+        filesChanged: [],
+        outcome: "rolled_back",
       };
     }
     const status = String(r.status ?? "failed") as DreamReport["outcome"];
@@ -456,4 +496,27 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   for (const t of a) if (b.has(t)) intersection++;
   const union = a.size + b.size - intersection;
   return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * Log entries minus those about derived concepts. The insights signal is fed
+ * from the recent log; without this it would synthesise from its own earlier
+ * syntheses, and an inference would harden into a "fact" over successive passes.
+ */
+async function withoutDerived<T extends { summary: string }>(kb: KnowledgeBase, entries: T[]): Promise<T[]> {
+  const derived = new Map<string, boolean>();
+  const isDerived = async (path: string) => {
+    if (!derived.has(path)) {
+      derived.set(path, await kb.readConcept(path).then((c) => c.frontmatter.derived === true, () => false));
+    }
+    return derived.get(path)!;
+  };
+  const kept: T[] = [];
+  for (const e of entries) {
+    const links = [...e.summary.matchAll(/\((\/[^)\s#]+\.md)\)/g)].map((m) => m[1]);
+    let skip = false;
+    for (const l of links) if (await isDerived(l)) skip = true;
+    if (!skip) kept.push(e);
+  }
+  return kept;
 }

@@ -49,6 +49,9 @@ export function inDirectory(conceptPath: string, directory: string | undefined):
   return conceptPath.toLowerCase().startsWith(dir + "/");
 }
 
+/** Search score multiplier for derived concepts (< 1: they rank below primary ones). */
+export const DERIVED_WEIGHT = 0.6;
+
 /**
  * Naive in-memory scan over all concepts — fine into the thousands of files.
  * Scores: title match > description/tag match > body match.
@@ -100,6 +103,10 @@ export async function searchBundle(
     // Empty query with type/tag filters = browse mode: include everything that passed filters.
     if (terms.length === 0) score = 1;
     if (score === 0) continue;
+    // A derived synthesis is a summary of other concepts: at equal relevance the
+    // primary concept it came from must win, so answers rest on the source.
+    const derived = fm.derived === true;
+    if (derived) score *= DERIVED_WEIGHT;
 
     hits.push({
       path: conceptPath,
@@ -114,6 +121,7 @@ export async function searchBundle(
               .trim()
           : undefined,
       score,
+      ...(derived ? { derived: true } : {}),
     });
   }
 

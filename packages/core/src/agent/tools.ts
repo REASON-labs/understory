@@ -10,7 +10,7 @@ import {
   type ConceptSource,
   type KnowledgeBase,
 } from "../okf/index.js";
-import type { TreeNode } from "../okf/types.js";
+import type { ConceptFrontmatter, TreeNode } from "../okf/types.js";
 import type { TraceRecorder } from "./trace.js";
 import { recordHotDelete, recordHotWrite } from "./hot-memory.js";
 
@@ -232,7 +232,25 @@ async function rejectForgotten(kb: KnowledgeBase, ...lists: unknown[]): Promise<
   }
 }
 
-export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, trace?: TraceRecorder) {
+/**
+ * Existing concepts a body links to ("[x](/a/b.md)"), excluding itself and the
+ * generated index/log. A derived concept is derived from what it links to.
+ */
+async function linkedConcepts(kb: KnowledgeBase, body: string, self: string): Promise<string[]> {
+  const found = new Set<string>();
+  for (const m of body.matchAll(/\]\((\/[^)#\s]+\.md)(?:#[^)]*)?\)/g)) {
+    const p = kb.bundle.toBundlePath(m[1]);
+    if (p !== self && !/(^|\/)(index|log)\.md$/.test(p) && (await kb.bundle.exists(p))) found.add(p);
+  }
+  return [...found].sort();
+}
+
+export function buildWriteTools(
+  kb: KnowledgeBase,
+  filesChanged: Set<string>,
+  trace?: TraceRecorder,
+  opts: { deriveNew?: boolean } = {}
+) {
   return {
     write_concept: tool({
       description:
@@ -243,22 +261,40 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         body: z.string().describe("Markdown body (no frontmatter block)"),
         sources: sourcesSchema,
         replaced: replacedSchema,
+        derived: z
+          .boolean()
+          .optional()
+          .describe(
+            "Set true when this NEW concept only synthesizes or summarizes other concepts (an overview), not primary knowledge. It is then recorded as derived from the concepts it links to and ranks below primary concepts."
+          ),
         log_summary: logSummary,
       }),
-      execute: async ({ path, frontmatter, body, sources, replaced, log_summary }) => {
+      execute: async ({ path, frontmatter, body, sources, replaced, derived, log_summary }) => {
         assertSaneKeys(frontmatter);
         await rejectForgotten(kb, frontmatter.sources, sources);
         // An overwrite must not drop provenance the previous version carried.
         const existing = await kb.readConcept(path).catch(() => null);
+        // Derived is decided here, not left to the model's frontmatter: a new concept
+        // the model declares (or the run is configured to treat) as a synthesis, or an
+        // existing derived concept that is being rewritten.
+        const isDerived = existing ? existing.frontmatter.derived === true : derived === true || opts.deriveNew === true;
+        const derivedFrom = isDerived && !existing ? await linkedConcepts(kb, body, kb.bundle.toBundlePath(path)) : [];
         const merged = mergeSources(existing?.frontmatter.sources, [
           ...normalizeSources(frontmatter.sources),
           ...normalizeSources(sources),
+          ...derivedFrom.map((ref) => ({ ref })),
           ...runSource(trace),
         ]);
         const history = appendHistory(existing?.frontmatter.history, withSource(replaced, trace));
+        const { derived: _ignored, ...rest } = stripHistory(frontmatter) as Record<string, unknown>;
         const c = await kb.writeConcept(
           path,
-          { ...stripHistory(frontmatter), sources: merged, ...(history.length ? { history } : {}) },
+          {
+            ...rest,
+            sources: merged,
+            ...(isDerived ? { derived: true } : {}),
+            ...(history.length ? { history } : {}),
+          } as ConceptFrontmatter,
           body,
           log_summary
         );
