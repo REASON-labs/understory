@@ -84,6 +84,34 @@ export interface AppConfig {
   fallbackConfigured: boolean;
 }
 
+/** A dream waiting on a dream/* branch for accept or reject (DREAM_MODE=review). */
+export interface DreamReview {
+  id: string;
+  branch: string;
+  createdAt: string;
+  title: string;
+  summary: string;
+  filesChanged: string[];
+  base: string;
+  liveCommitsSince: number;
+}
+
+/** The parts of /api/dream/status the UI uses. */
+export interface DreamStatus {
+  enabled: boolean;
+  interval: string | null;
+  mode: string;
+  running: boolean;
+  nextRunAt: string | null;
+  reviews: DreamReview[];
+}
+
+export type AcceptResult =
+  | { ok: true; commit: string; filesChanged: string[]; revertCommand: string }
+  | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "conflict"; conflicts: string[] }
+  | { ok: false; reason: "error"; message: string };
+
 const TOKEN_KEY = "understory-token";
 
 export function getAuthToken(): string {
@@ -139,6 +167,23 @@ async function get<T>(url: string): Promise<T> {
   return res.json();
 }
 
+async function getText(url: string): Promise<string> {
+  const res = await fetch(apiUrl(url), { headers: authHeaders() });
+  if (!res.ok) throw new ApiError(res.status, `${res.status} ${await res.text()}`);
+  return res.text();
+}
+
+/** POST returning the JSON body for any status: callers branch on its own fields. */
+async function post<T>(url: string): Promise<T> {
+  const res = await fetch(apiUrl(url), { method: "POST", headers: authHeaders() });
+  const body = await res.text();
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw new ApiError(res.status, `${res.status} ${body}`);
+  }
+}
+
 export const api = {
   tree: () => get<TreeNode>("/api/tree"),
   concept: (path: string) => get<Concept>(`/api/concept?path=${encodeURIComponent(path)}`),
@@ -150,4 +195,9 @@ export const api = {
   trace: (id: string) => get<QueryTrace>(`/api/trace?id=${encodeURIComponent(id)}`),
   config: () => get<AppConfig>("/api/config"),
   profile: () => get<ProfileInfo>("/api/profile"),
+  dreamStatus: () => get<DreamStatus>("/api/dream/status"),
+  reviewDiff: (id: string) => getText(`/api/dream/reviews/${encodeURIComponent(id)}/diff`),
+  acceptReview: (id: string) => post<AcceptResult>(`/api/dream/reviews/${encodeURIComponent(id)}/accept`),
+  rejectReview: (id: string) =>
+    post<{ ok: true; rejected: string } | { error: string }>(`/api/dream/reviews/${encodeURIComponent(id)}/reject`),
 };

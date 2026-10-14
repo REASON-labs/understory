@@ -397,6 +397,10 @@ commits are left on a `dream/<timestamp>` branch for you to accept or reject.
 It is the way to see what dreaming would actually do to your memory before
 letting it apply on its own. Requires `GIT_AUTOCOMMIT=true`.
 
+In the web UI, **Reviews** (sidebar footer, with a badge while one is pending)
+shows each review's summary, the concepts it changes and a coloured diff, with
+Accept and Reject buttons. The same is available over the API:
+
 ```bash
 curl localhost:3800/api/dream/reviews                       # pending reviews: summary, concepts changed
 curl localhost:3800/api/dream/reviews/<id>/diff             # the changes, as a plain-text diff
