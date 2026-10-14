@@ -16,13 +16,14 @@ vi.mock("@understory/core", async (importOriginal) => ({
 const { dreamRouter } = await import("../src/api/dream.js");
 const { startDreamer, getDreamStatus, resetDreamState } = await import("../src/dreamer.js");
 
+const commitsWithPrefix = vi.fn();
 let server: Server;
 let baseUrl: string;
 let bundleRoot: string;
 
 function start(): Promise<void> {
   const app = express();
-  app.use("/api", dreamRouter({} as KnowledgeBase));
+  app.use("/api", dreamRouter({ commitsWithPrefix } as unknown as KnowledgeBase));
   return new Promise((resolve) => {
     server = app.listen(0, "127.0.0.1", () => {
       baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -34,7 +35,9 @@ function start(): Promise<void> {
 beforeEach(async () => {
   bundleRoot = mkdtempSync(path.join(tmpdir(), "understory-dream-"));
   runDream.mockReset();
+  commitsWithPrefix.mockReset().mockResolvedValue([]);
   resetDreamState();
+  delete process.env.DREAM_MAX_CHANGES;
   delete process.env.DREAM_INTERVAL;
   delete process.env.DREAM_SIGNALS;
   delete process.env.DREAM_INSIGHTS;
@@ -102,6 +105,22 @@ describe("GET /api/dream/status", () => {
     expect(body.nextRunAt).toBeTruthy();
   });
 
+  it("reports the change budget and the memory's dream commits from git (#20)", async () => {
+    process.env.DREAM_MAX_CHANGES = "8";
+    commitsWithPrefix.mockResolvedValue([
+      { commit: "abc1234", date: "2026-10-13T10:00:00Z", message: "dream: update: wired orphan" },
+    ]);
+
+    const body = await (await fetch(`${baseUrl}/api/dream/status`)).json();
+
+    expect(body.maxChanges).toBe(8);
+    expect(commitsWithPrefix).toHaveBeenCalledWith("dream:", 20);
+    expect(body.commits).toEqual([
+      { commit: "abc1234", date: "2026-10-13T10:00:00Z", message: "dream: update: wired orphan" },
+    ]);
+    expect(body.undo).toMatch(/revertCommand/);
+  });
+
   it("reports the 5-minute clamp rather than hiding it", async () => {
     process.env.DREAM_INTERVAL = "30s";
     startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
@@ -123,6 +142,17 @@ describe("startDreamer config validation", () => {
 
     expect(getDreamStatus().enabled).toBe(false);
     expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/typo/));
+  });
+
+  it("warns on an invalid DREAM_MAX_CHANGES and keeps the default, never unlimited", () => {
+    process.env.DREAM_INTERVAL = "6h";
+    process.env.DREAM_MAX_CHANGES = "lots";
+
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+
+    expect(getDreamStatus().enabled).toBe(true);
+    expect(getDreamStatus().maxChanges).toBe(15);
+    expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/DREAM_MAX_CHANGES="lots"/));
   });
 
   it("refuses to start when DREAM_SIGNALS enables nothing", () => {
@@ -167,6 +197,56 @@ describe("dream run history", () => {
         filesChanged: ["/a.md", "/b.md"],
       });
       expect(status.lastRun!.signals).toEqual([{ kind: "links", count: 2 }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a successful run with commits a command that reverts exactly that run", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.DREAM_INTERVAL = "5m";
+      runDream.mockResolvedValue({
+        ran: true,
+        outcome: "success",
+        summary: "split a fat concept",
+        filesChanged: ["/a.md", "/b.md"],
+        commits: ["1111111", "2222222", "3333333"],
+        signals: [],
+        suppressed: [],
+      });
+
+      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+
+      expect(getDreamStatus().lastRun).toMatchObject({
+        commits: ["1111111", "2222222", "3333333"],
+        revertCommand: "git revert --no-edit 1111111^..3333333",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("logs a too-broad dream to stderr with its outcome", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.DREAM_INTERVAL = "5m";
+      runDream.mockResolvedValue({
+        ran: true,
+        outcome: "too_broad",
+        summary: "dream rolled back as too broad: it changed 30 concepts",
+        filesChanged: [],
+        signals: [],
+        suppressed: [],
+      });
+
+      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+
+      expect(getDreamStatus().lastRun).toMatchObject({ outcome: "too_broad" });
+      expect(getDreamStatus().lastRun!.revertCommand).toBeUndefined();
+      expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/dream too_broad/));
     } finally {
       vi.useRealTimers();
     }

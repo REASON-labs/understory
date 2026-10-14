@@ -1,5 +1,5 @@
 import express, { type Router } from "express";
-import { runDream, type KnowledgeBase } from "@understory/core";
+import { DREAM_COMMIT_PREFIX, runDream, type KnowledgeBase } from "@understory/core";
 import { getDreamStatus } from "../dreamer.js";
 
 /**
@@ -15,9 +15,20 @@ import { getDreamStatus } from "../dreamer.js";
 export function dreamRouter(kb: KnowledgeBase): Router {
   const router = express.Router();
 
-  /** Config, schedule, and the recent run history. Cheap — no bundle reads. */
-  router.get("/dream/status", (_req, res) => {
-    res.json(getDreamStatus());
+  /**
+   * Config, schedule, the recent run history, and this memory's recent dream
+   * commits. One `git log`, no concept reads. The run history resets with the
+   * process; `commits` comes from git, so it survives restarts.
+   */
+  router.get("/dream/status", async (_req, res) => {
+    const commits = await kb.commitsWithPrefix(DREAM_COMMIT_PREFIX, 20);
+    res.json({
+      ...getDreamStatus(),
+      commits,
+      undo:
+        "Each history entry with commits has a revertCommand that undoes exactly that run; " +
+        "run it in the bundle directory. A single commit reverts with `git revert <commit>`.",
+    });
   });
 
   /**

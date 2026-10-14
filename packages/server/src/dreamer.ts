@@ -1,5 +1,6 @@
 import {
   parseDuration,
+  resolveDreamMaxChanges,
   resolveDreamSignals,
   runDream,
   type DreamReport,
@@ -20,6 +21,10 @@ export interface DreamRunRecord {
   signals: { kind: string; count: number }[];
   suppressed: { kind: string; count: number }[];
   error?: string;
+  /** Git commits this run made, oldest first. */
+  commits?: string[];
+  /** Undoes exactly this run; run it in the bundle directory. */
+  revertCommand?: string;
   /** Which memory ran, when several are hosted (profiles). */
   label?: string;
 }
@@ -31,6 +36,8 @@ export interface DreamStatus {
   intervalMs: number | null;
   clamped: boolean;
   signals: string[];
+  /** DREAM_MAX_CHANGES: concepts one dream may change before it is rolled back. */
+  maxChanges: number;
   running: boolean;
   nextRunAt: string | null;
   lastRun: DreamRunRecord | null;
@@ -70,6 +77,7 @@ export function getDreamStatus(): DreamStatus {
     intervalMs: state.intervalMs,
     clamped: state.clamped,
     signals: signalError ? [`(invalid: ${signalError})`] : signals,
+    maxChanges: resolveDreamMaxChanges().limit,
     running: state.running,
     nextRunAt: state.nextRunAt ? new Date(state.nextRunAt).toISOString() : null,
     lastRun: history[0] ?? null,
@@ -131,10 +139,13 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
     return;
   }
 
+  const maxChanges = resolveDreamMaxChanges();
+  if (maxChanges.warning) console.error(`[understory] ${maxChanges.warning}`);
+
   const every = Math.max(interval, MIN_INTERVAL_MS);
   const clamped = every !== interval;
   console.log(
-    `[understory] dreaming: every ${raw}${clamped ? " (clamped to 5m minimum)" : ""} — signals: ${signals.join(", ")}`
+    `[understory] dreaming: every ${raw}${clamped ? " (clamped to 5m minimum)" : ""} — signals: ${signals.join(", ")}; at most ${maxChanges.limit} concepts changed per run`
   );
   if (!signals.includes("duplicates")) {
     console.log(
@@ -175,6 +186,7 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
             signals: report.signals?.map((s) => ({ kind: s.kind, count: s.count })) ?? [],
             suppressed: report.suppressed ?? [],
             ...(label ? { label } : {}),
+            ...commitFields(report.commits),
           });
           if (!report.ran) {
             console.log(`[understory] dream skipped${tag}: ${report.reason}`);
@@ -224,6 +236,15 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
     }
   }, every);
   timer.unref(); // never keep the process alive just to dream
+}
+
+function commitFields(commits: string[] | undefined): Pick<DreamRunRecord, "commits" | "revertCommand"> {
+  if (!commits || commits.length === 0) return {};
+  // A dream holds the bundle write lock for its whole run, so its commits are
+  // contiguous: one range revert undoes exactly this run.
+  const first = commits[0];
+  const last = commits[commits.length - 1];
+  return { commits, revertCommand: `git revert --no-edit ${first}^..${last}` };
 }
 
 function truncate(s: string, n: number): string {

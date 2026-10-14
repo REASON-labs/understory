@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Rollout test for provenance / memory_explain / supersession history /
- * memory_forget. One command, mechanical checks, no judgment needed.
+ * memory_forget / dream guardrails (#20). One command, mechanical checks, no
+ * judgment needed.
  *
  *   node scripts/rollout-test.mjs <path-to-a-bundle>
  *
@@ -256,6 +257,66 @@ say("\nSTEP 9: a forgotten source cannot be re-added");
 
 await client.close();
 
+// ── S10-S11: dream guardrails (#20). Dreams are not an MCP tool, so these
+// drive the built core directly, on the same copy, after the server is closed.
+const { KnowledgeBase, runDream } = await imp("@understory/core");
+const { execFileSync } = await import("node:child_process");
+const git = (...args) => execFileSync("git", ["-C", dest, ...args], { encoding: "utf8" });
+/** Working tree contents, minus run traces (written outside any transaction). */
+const snapshot = () =>
+  Object.fromEntries(
+    walk(dest)
+      .map((f) => [rel(f), f])
+      .filter(([r]) => !r.startsWith("/.traces/"))
+      .map(([r, f]) => [r, fs.readFileSync(f, "utf8")])
+  );
+const sameTree = (a, b) => {
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
+  return keys.filter((k) => a[k] !== b[k]);
+};
+// Guaranteed dream work: two orphans and a broken link.
+seed("dreamtest/kestrel.md", "type: Note\ntitle: Kestrel cache\ndescription: Kestrel is the read cache in front of the billing DB", "# Kestrel\n\nKestrel caches billing reads for 60s.\n");
+seed("dreamtest/heron.md", "type: Note\ntitle: Heron queue\ndescription: Heron is the job queue that feeds Kestrel invalidations", "# Heron\n\nHeron sends cache invalidations to Kestrel. See [old runbook](/dreamtest/gone.md).\n");
+git("add", "-A");
+git("commit", "-q", "--allow-empty", "-m", "rollout: seed dream test");
+const dkb = new KnowledgeBase(dest, { gitAutocommit: true });
+await dkb.ensureGitReady();
+
+say("\nSTEP 10: a dream over its change budget is rolled back in full");
+{
+  const before = snapshot();
+  const r = await runDream(dkb, { maxConceptsChanged: 1 });
+  say(`  outcome: ${r.outcome} — ${(r.summary ?? r.reason ?? "").slice(0, 300)}`);
+  if (r.outcome === "too_broad") {
+    record("10a", "outcome is too_broad and names the limit", /DREAM_MAX_CHANGES=1/.test(r.summary) ? "PASS" : "FAIL");
+    const diff = sameTree(before, snapshot());
+    record("10b", "working tree is exactly as before", diff.length === 0 ? "PASS" : "FAIL", diff.join(", "));
+    record("10c", "the rollback commit is a dream commit", /^dream: revert:/.test(git("log", "-1", "--format=%s")) ? "PASS" : "FAIL");
+  } else {
+    // The model stayed within one concept or did nothing: legitimate, just untested.
+    record("10", "budget rollback exercised", "WARN", `model produced outcome ${r.outcome}, not an over-budget run`);
+  }
+}
+
+say("\nSTEP 11: dream commits are prefixed and one command reverts the run");
+{
+  const head = git("rev-parse", "HEAD").trim();
+  const before = snapshot();
+  const r = await runDream(dkb);
+  say(`  outcome: ${r.outcome} — ${(r.summary ?? r.reason ?? "").slice(0, 300)}`);
+  const subjects = git("log", "--format=%s", `${head}..HEAD`).trim().split("\n").filter(Boolean);
+  record("11a", "every commit made by the dream starts with dream:", subjects.every((m) => m.startsWith("dream:")) ? "PASS" : "FAIL", subjects.filter((m) => !m.startsWith("dream:")).join(" | "));
+  const listed = (await dkb.commitsWithPrefix("dream:", 50)).map((c) => c.commit);
+  record("11b", "commitsWithPrefix lists them", (r.commits ?? []).every((c) => listed.includes(c)) ? "PASS" : "FAIL");
+  if (r.outcome === "success" && r.commits?.length) {
+    git("revert", "--no-edit", `${r.commits[0]}^..${r.commits.at(-1)}`);
+    const diff = sameTree(before, snapshot());
+    record("11c", "the revert command restores the tree exactly", diff.length === 0 ? "PASS" : "FAIL", diff.join(", "));
+  } else {
+    record("11c", "revert of a successful dream", "WARN", `model produced outcome ${r.outcome} with ${r.commits?.length ?? 0} commit(s)`);
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────
 say("\n==================== SUMMARY ====================");
 const order = { FAIL: 0, WARN: 1, SKIP: 2, PASS: 3 };
@@ -264,8 +325,7 @@ const count = (s) => results.filter((r) => r.status === s).length;
 say(`\nPASS ${count("PASS")}  FAIL ${count("FAIL")}  WARN ${count("WARN")}  SKIP ${count("SKIP")}`);
 say(`Git log of the test copy:`);
 try {
-  const { execFileSync } = await import("node:child_process");
-  say(execFileSync("git", ["-C", dest, "log", "--oneline", "-n", "15"], { encoding: "utf8" }));
+  say(execFileSync("git", ["-C", dest, "log", "--oneline", "-n", "25"], { encoding: "utf8" }));
 } catch {
   say("(no git log)");
 }

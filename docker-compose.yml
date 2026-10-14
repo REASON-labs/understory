@@ -46,4 +46,5 @@ services:
       DREAM_INTERVAL: ${DREAM_INTERVAL:-}
       DREAM_SIGNALS: ${DREAM_SIGNALS:-}
       DREAM_INSIGHTS: ${DREAM_INSIGHTS:-}
+      DREAM_MAX_CHANGES: ${DREAM_MAX_CHANGES:-}
     restart: unless-stopped
