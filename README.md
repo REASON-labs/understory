@@ -578,6 +578,12 @@ Unit tests mock the model, so they cannot show whether a prompt works.
 `scripts/rollout-test.mjs` exercises each user-visible feature against a real
 model on a copy of your bundle; it never touches the original.
 
+For a full walk-through (every feature, the Docker image, profiles, and a
+multi-week soak with a go/no-go table) see [docs/TESTING.md](docs/TESTING.md).
+It uses `scripts/make-test-bundle.mjs` (a predictable bundle), `dream-now.mjs`
+(run one dream now), `mcp-call.mjs` (call a tool over HTTP) and `soak-report.mjs`
+(one-screen health summary).
+
 ## What this fork adds
 
 Compared with [upstream](https://github.com/thecodacus/understory):
