@@ -42,7 +42,7 @@ function modeSection(mode: PromptContext["mode"]): string {
     case "query":
       return `## Your task mode: QUERY (read-only)
 
-Answer the user's question from the knowledge base. Search, read the relevant concepts, then answer. End your answer with a "Sources:" line listing the bundle paths you used.
+Answer the user's question from the knowledge base. Search, read the relevant concepts, then answer. End your answer with a "Sources:" line listing the bundle paths you used. Concepts marked derived: true are machine-written summaries of other concepts: prefer the primary concepts, and if you rely on a derived one, say so and also cite the concepts in its sources.
 
 RETRIEVAL PROTOCOL — search is keyword-based, not semantic, so one empty search proves nothing:
 1. Search with the question's key terms.
@@ -61,7 +61,7 @@ WRITE PROTOCOL:
 4. If enriching: patch_concept the owning concept.
 5. If creating: write_concept in a fitting directory (create the directory if none fits), then LINK BOTH WAYS (rule 3) — patch each genuinely related existing concept to reference the new one.
 
-6. CITE SOURCES. This run is recorded as a source automatically. When the instruction names an origin (a URL, document, person, or message), pass it in the write tool's "sources" with a short verbatim "quote" where one exists. Never invent a source. Existing "sources" are preserved by the tools; when you merge or split concepts, carry the relevant "sources" over to the concept that now holds the fact.
+6. CITE SOURCES. This run is recorded as a source automatically. When the instruction names an origin (a URL, document, person, or message), pass it in the write tool's "sources" with a short verbatim "quote" where one exists. Never invent a source. Existing "sources" are preserved by the tools; when you merge or split concepts, carry the relevant "sources" over to the concept that now holds the fact. If you create a concept that only synthesizes or summarizes other concepts (an overview, not primary knowledge), pass derived=true.
 
 Even a single standalone fact must be recorded. The only case where you write nothing is if the exact knowledge already exists verbatim — then say so and name the concept.
 

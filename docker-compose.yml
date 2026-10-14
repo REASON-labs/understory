@@ -47,5 +47,6 @@ services:
       DREAM_SIGNALS: ${DREAM_SIGNALS:-}
       DREAM_INSIGHTS: ${DREAM_INSIGHTS:-}
       DREAM_MAX_CHANGES: ${DREAM_MAX_CHANGES:-}
+      DREAM_VERIFY: ${DREAM_VERIFY:-}
       DREAM_MODE: ${DREAM_MODE:-}
     restart: unless-stopped

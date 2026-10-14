@@ -3,7 +3,7 @@ export { parseDoc, serializeDoc, hasNonEmptyType, containsPlainObject, findPlain
 export { Bundle, BundleError, replaceSection } from "./bundle.js";
 export { regenerateIndex, regenerateIndexChain, pruneEmptyDirs } from "./indexer.js";
 export { appendLog, readLog } from "./logger.js";
-export { searchBundle, listTypes, matchesFilters, inDirectory, type SearchOptions } from "./search.js";
+export { searchBundle, listTypes, matchesFilters, inDirectory, DERIVED_WEIGHT, type SearchOptions } from "./search.js";
 export { validateBundle } from "./validate.js";
 export { normalizeSources, mergeSources, MAX_SOURCES, MAX_RUN_CITATIONS, type ConceptSource } from "./sources.js";
 export { normalizeHistory, appendHistory, MAX_HISTORY, type Supersession } from "./history.js";

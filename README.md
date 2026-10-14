@@ -372,6 +372,31 @@ hub was never rewritten) is worse than none. An invalid value falls back to the
 default with a warning, never to "unlimited". With `MUTATION_ROLLBACK=false`
 nothing can be rolled back, so an over-budget run is reported as `partial`.
 
+#### Verification, derived concepts and step limits
+
+Before a dream commits, deterministic checks (no LLM, `DREAM_VERIFY`, on by
+default) run inside the same transaction, so a failure rolls the whole run back
+and is reported as `unverified` with the reasons:
+
+- nothing is **deleted** unless duplicate merging is enabled (`DREAM_SIGNALS=all`);
+- the run introduces no **new broken link** (links that were already broken are not its fault);
+- nothing written **cites or mentions a forgotten source**;
+- a **derived** concept cites the concepts it came from, those exist, and any
+  quoted excerpt really appears in the concept it names.
+
+A dream that **runs out of steps** is rolled back, never kept half-done (an
+interactive `memory_update` that hits the limit is still reported as `partial`,
+since someone is there to look).
+
+A **derived** concept (`derived: true`) is a machine-written synthesis such as the
+overview the `insights` signal writes. It cites the concepts it links to, ranks
+below primary concepts in search (at equal relevance the primary one wins), is
+flagged in search results and `memory_explain`, and the `insights` signal never
+feeds it back in as input, so an inference cannot harden into a "fact" over
+successive passes. The model marks an overview with `derived=true` when it writes
+it; a dream whose only signal is `insights` marks every concept it creates. Forgetting a source
+still cascades through derived concepts (they cite what they summarise).
+
 Every commit a dream makes starts with `dream:` (including the `dream: revert:`
 of a rolled-back run), so its changes are easy to find:
 
@@ -589,4 +614,5 @@ setting from `.env`; an empty value means "use the default".
 | `HOT_MEMORY` / `HOT_MEMORY_TTL` | `true` / `1h` | Recent working set checked before a full run |
 | `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation) |
 | `DREAM_MAX_CHANGES` | `15` | Concepts one dream may change before it is rolled back |
+| `DREAM_VERIFY` | `true` | Deterministic checks before a dream commits; `false` turns them off ([Verification](#verification-derived-concepts-and-step-limits)) |
 | `DREAM_MODE` | `apply` | `review` leaves each dream on a `dream/*` branch to accept or reject ([Review mode](#review-mode)) |

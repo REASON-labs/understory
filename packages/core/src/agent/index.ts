@@ -8,3 +8,5 @@ export { explainConcept, formatExplanation } from "./explain.js";
 export type { ConceptExplanation, ExplainedSource, ExplainedChange } from "./explain.js";
 export { planForget, runForget, formatForget } from "./forget.js";
 export type { ForgetTarget, ForgetPlan, ForgetResult } from "./forget.js";
+export { verifyDreamRun, baselineBrokenLinks } from "./dream-verify.js";
+export type { RunInfo, VerifyOptions } from "./dream-verify.js";

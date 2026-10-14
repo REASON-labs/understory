@@ -21,6 +21,8 @@ export interface ConceptExplanation {
   title?: string;
   type?: string;
   description?: string;
+  /** True for a machine-written synthesis of other concepts; its sources name what it summarises. */
+  derived: boolean;
   sources: ExplainedSource[];
   /** Facts this concept replaced, oldest first (capped; git has the full record). */
   superseded: Supersession[];
@@ -92,6 +94,7 @@ export async function explainConcept(
     type: fm.type,
     description: fm.description,
     sources,
+    derived: fm.derived === true,
     superseded: normalizeHistory(fm.history),
     changes,
     changesFrom,
@@ -104,6 +107,7 @@ export async function explainConcept(
 export function formatExplanation(x: ConceptExplanation): string {
   const lines: string[] = [`# ${x.title ?? x.path}`, `${x.path}${x.type ? `  [${x.type}]` : ""}`];
   if (x.description) lines.push(x.description);
+  if (x.derived) lines.push("DERIVED: a machine-written summary of other concepts, not primary knowledge (see Sources).");
 
   lines.push("", "## Sources");
   if (x.sources.length === 0) lines.push("- (none recorded)");
