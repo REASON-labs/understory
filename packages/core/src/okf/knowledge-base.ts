@@ -271,6 +271,25 @@ export class KnowledgeBase {
     }
   }
 
+  /** True when every mutation is committed to git (GIT_AUTOCOMMIT). */
+  get gitEnabled(): boolean {
+    return this.git !== null;
+  }
+
+  /**
+   * Run `fn` holding the exclusive bundle write lock, for writes that bypass
+   * the KB's own write path (e.g. merging an accepted dream review). No
+   * journal: `fn` is responsible for leaving the bundle consistent.
+   */
+  async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+    const release = await this.acquireWriteLock();
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+
   /** True while a transaction is open on this async call path. */
   get inTransaction(): boolean {
     return this.txContext.getStore() !== undefined;

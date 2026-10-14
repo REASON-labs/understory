@@ -380,7 +380,7 @@ export async function runMutation(
       ok: true,
       result: {
         summary: result.text,
-        filesChanged: [...filesChanged].sort(),
+        filesChanged: [...new Set([...filesChanged, ...scope.touched])].sort(),
         steps: result.steps.length,
         traceId: trace.id,
         commits: scope.commits,

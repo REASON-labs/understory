@@ -1,6 +1,15 @@
 import type { KnowledgeBase } from "../okf/index.js";
 import type { GraphNode } from "../okf/graph.js";
 import { runMutation, type AgentOptions } from "./agent.js";
+import {
+  DREAM_COMMIT_PREFIX,
+  DreamReviews,
+  resolveDreamMode,
+  runInDreamWorktree,
+  type DreamMode,
+} from "./dream-review.js";
+
+export { DREAM_COMMIT_PREFIX };
 
 /** The deterministic signals that can trigger a consolidation pass. */
 export const DREAM_SIGNAL_KINDS = [
@@ -28,12 +37,6 @@ export const DEFAULT_DREAM_SIGNALS: DreamSignalKind[] = [
   "oversized",
   "insights",
 ];
-
-/**
- * Every git commit a dream makes starts with this, so a dream's changes can be
- * listed (`git log --grep '^dream:'`) and reverted as a group.
- */
-export const DREAM_COMMIT_PREFIX = "dream:";
 
 /**
  * Default cap on concepts one dream may change (issue #20). The largest
@@ -70,6 +73,8 @@ export interface DreamReport {
   commits?: string[];
   /** The change budget this pass ran under. */
   maxChanges?: number;
+  /** DREAM_MODE=review: the branch holding this run's changes, awaiting accept or reject. */
+  review?: { branch: string };
 }
 
 export interface DreamOptions extends AgentOptions {
@@ -79,6 +84,8 @@ export interface DreamOptions extends AgentOptions {
    * do before, or between, its runs.
    */
   dryRun?: boolean;
+  /** Overrides DREAM_MODE. */
+  mode?: DreamMode;
 }
 
 /**
@@ -178,13 +185,54 @@ export async function runDream(
     };
   }
 
+  const mode = options.mode ?? resolveDreamMode();
   const maxChanges = options.maxConceptsChanged ?? resolveDreamMaxChanges().limit;
-  const result = await runner(kb, buildDreamInstruction(signals, maxChanges), {
-    ...options,
-    commitPrefix: DREAM_COMMIT_PREFIX,
-    maxConceptsChanged: maxChanges,
+  const instruction = buildDreamInstruction(signals, maxChanges);
+  const runOptions = { ...options, commitPrefix: DREAM_COMMIT_PREFIX, maxConceptsChanged: maxChanges };
+
+  if (mode === "apply") {
+    const result = await runner(kb, instruction, runOptions);
+    return { ran: true, signals, suppressed, maxChanges, ...normalizeMutation(result) };
+  }
+
+  // Review mode: the branch is the review, so git is required.
+  if (!kb.gitEnabled) {
+    return {
+      ran: false,
+      reason: "DREAM_MODE=review needs GIT_AUTOCOMMIT=true (a review is a git branch)",
+      signals,
+      suppressed,
+    };
+  }
+  // One review at a time: stacking unreviewed dreams compounds them.
+  const pending = await new DreamReviews(kb).list();
+  if (pending.length > 0) {
+    return {
+      ran: false,
+      reason: `review pending: ${pending[0].branch}; accept or reject it before the next dream`,
+      signals,
+      suppressed,
+    };
+  }
+
+  let report!: DreamReport;
+  const { branch } = await runInDreamWorktree(kb, async (worktreeKb) => {
+    const normalized = normalizeMutation(await runner(worktreeKb, instruction, runOptions));
+    report = { ran: true, signals, suppressed, maxChanges, ...normalized };
+    const n = normalized.filesChanged.length;
+    const firstLine = normalized.summary.split("\n").find((l) => l.trim())?.trim() ?? "";
+    return {
+      keep: normalized.outcome === "success" && (normalized.commits?.length ?? 0) > 0,
+      title: `${DREAM_COMMIT_PREFIX} review: ${n} concept(s): ${firstLine.slice(0, 72)}`,
+      body:
+        `${normalized.summary.trim()}\n\n` +
+        `Signals: ${signals.map((s) => `${s.kind} ${s.count}`).join(", ")}`,
+    };
   });
-  return { ran: true, signals, suppressed, maxChanges, ...normalizeMutation(result) };
+  // The run's commits live on the review branch, not in the live history, so
+  // they are not reported as revertable commits.
+  const { commits: _onBranch, ...rest } = report;
+  return branch ? { ...rest, review: { branch } } : rest;
 }
 
 /**
