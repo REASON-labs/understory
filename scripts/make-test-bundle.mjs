@@ -23,6 +23,15 @@ if (fs.existsSync(dir) && fs.readdirSync(dir).length > 0) {
   console.error(`${dir} exists and is not empty; pick a new directory.`);
   process.exit(2);
 }
+// A bundle created inside a git repository would autocommit into THAT repository
+// (this once put ten test commits into the understory repo itself).
+for (let d = path.dirname(path.resolve(dir)); ; d = path.dirname(d)) {
+  if (fs.existsSync(path.join(d, ".git"))) {
+    console.error(`Refusing: ${path.resolve(dir)} is inside the git repository at ${d}. Pick a directory outside any repository (for example under ~/ustory-test).`);
+    process.exit(2);
+  }
+  if (path.dirname(d) === d) break;
+}
 const coreIndex = path.join(repo, "packages/core/dist/index.js");
 if (!fs.existsSync(coreIndex)) {
   console.error("Not built. Run: pnpm install && pnpm -r build");
