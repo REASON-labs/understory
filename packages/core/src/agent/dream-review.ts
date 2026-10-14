@@ -133,6 +133,13 @@ export class DreamReviews {
       if (!(await this.exists(id))) return { ok: false, reason: "not_found" } as const;
       const branch = DREAM_BRANCH_PREFIX + id;
 
+      // Stale stat info (a bind mount, a commit made from the host) makes git
+      // refuse to merge or even abort ("not uptodate"); refresh first.
+      await this.refreshIndex();
+      // A merge left in progress (crash, failed abort) must never be
+      // concluded by the commit below: it can hold conflict markers.
+      if (await this.mergeInProgress()) await this.abortMerge();
+
       // Anything uncommitted (a hand edit, new traces) is committed first, as
       // the next mutation would: a merge must not overwrite or mix it in.
       await this.git.add(["-A"]);
@@ -148,6 +155,7 @@ export class DreamReviews {
         this.show(branch, "log.md"),
       ]);
 
+      await this.refreshIndex();
       let mergeError = "";
       try {
         await this.git.raw(["merge", "--no-ff", "--no-commit", branch]);
@@ -169,7 +177,7 @@ export class DreamReviews {
         .filter(Boolean);
       const conflicts = unmerged.filter((f) => !isGenerated(f));
       if (conflicts.length > 0) {
-        await this.git.raw(["merge", "--abort"]);
+        await this.abortMerge();
         return { ok: false, reason: "conflict", conflicts: conflicts.map((f) => "/" + f) } as const;
       }
 
@@ -189,7 +197,7 @@ export class DreamReviews {
           revertCommand: `git revert -m 1 --no-edit ${commit}`,
         } as const;
       } catch (err) {
-        await this.git.raw(["merge", "--abort"]).catch(() => {});
+        if (await this.mergeInProgress()) await this.abortMerge();
         return { ok: false, reason: "error", message: (err as Error).message } as const;
       }
     });
@@ -253,6 +261,25 @@ export class DreamReviews {
 
   private mergeInProgress(): Promise<boolean> {
     return refExists(this.git, "MERGE_HEAD");
+  }
+
+  private async refreshIndex(): Promise<void> {
+    await this.git.raw(["update-index", "-q", "--refresh"]).catch(() => {});
+  }
+
+  /**
+   * Undo an in-progress merge, escalating until it is gone. `reset --hard
+   * HEAD` is safe as the last resort: accept commits everything live before
+   * it merges, so HEAD is exactly the pre-merge state. Throws if a merge is
+   * somehow still in progress, because the next commit would conclude it.
+   */
+  private async abortMerge(): Promise<void> {
+    await this.refreshIndex();
+    for (const args of [["merge", "--abort"], ["reset", "--merge"], ["reset", "--hard", "HEAD"]]) {
+      await this.git.raw(args).catch(() => {});
+      if (!(await this.mergeInProgress())) return;
+    }
+    throw new Error("could not abort an in-progress merge in the bundle; resolve it by hand before writing again");
   }
 
   /** log.md: the live log plus the dream's new entries. index.md: regenerated everywhere. */
