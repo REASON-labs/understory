@@ -1,40 +1,93 @@
 import path from "node:path";
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { KnowledgeBase, resolveFallbackConfig, resolveLlmTimeout, resolveMaxSteps, resolveModelConfig } from "@understory/core";
 import express from "express";
-import cors from "cors";
-import { KnowledgeBase, resolveFallbackConfig, resolveModelConfig } from "@understory/core";
-import { mcpRouter } from "./mcp/http.js";
-import { browseRouter } from "./api/browse.js";
-import { chatRouter } from "./api/chat.js";
+import { adminRouter } from "./admin.js";
 import { healthRouter } from "./api/health.js";
-import { dreamRouter } from "./api/dream.js";
-import { bearerAuth } from "./auth.js";
+import { buildApp } from "./app.js";
 import { startDreamer } from "./dreamer.js";
+import { profileMemoryHost, singleMemoryHost, type MemoryHost } from "./host.js";
+import { ProfileRegistry } from "./profiles.js";
 
+// Fork default: on. Every mutation is a git commit, so a wrong write is one revert away.
+const gitAutocommit = process.env.GIT_AUTOCOMMIT !== "false";
+// PROFILES_ROOT takes precedence: the Docker image always sets BUNDLE_ROOT.
+const profilesRoot = process.env.PROFILES_ROOT;
 const bundleRoot = process.env.BUNDLE_ROOT;
-if (!bundleRoot) {
-  console.error("BUNDLE_ROOT env var is required");
+
+if (!profilesRoot && !bundleRoot) {
+  console.error("BUNDLE_ROOT (one memory) or PROFILES_ROOT (one memory per profile) is required");
   process.exit(1);
 }
 
-const kb = new KnowledgeBase(bundleRoot, {
-  gitAutocommit: process.env.GIT_AUTOCOMMIT !== "false",
-});
-
-startDreamer(kb);
-
-if (process.env.GIT_AUTOCOMMIT === "true") {
+/** Autocommit must be able to work before a memory serves requests (issue #21). */
+async function requireGitReady(kb: KnowledgeBase, label: string): Promise<void> {
   const gitReady = await kb.ensureGitReady();
   if (!gitReady.ok) {
-    console.error(`[understory] GIT_AUTOCOMMIT=true but autocommit cannot work: ${gitReady.reason}`);
-    process.exit(1);
+    throw new Error(
+      `git autocommit is on (the default; set GIT_AUTOCOMMIT=false to disable) but cannot work for ${label}: ${gitReady.reason}`
+    );
   }
-  console.log("[understory] git autocommit: enabled (bundle history is being recorded)");
 }
 
+let host: MemoryHost;
+let admin: ReturnType<typeof adminRouter> | undefined;
+let serving: string;
+let health: express.Router;
 
-const app = express();
+try {
+  if (profilesRoot) {
+    const registry = new ProfileRegistry(profilesRoot, { gitAutocommit });
+    const existing = await registry.memories();
+    if (gitAutocommit) {
+      for (const { name, kb } of existing) await requireGitReady(kb, `profile "${name}"`);
+    }
+    host = profileMemoryHost(registry);
+    // No single bundle to probe in profile mode: liveness only.
+    health = express.Router().get("/health", (_req, res) => {
+      res.json({ status: "ok", uptimeSeconds: Math.round(process.uptime()), mode: "profiles" });
+    });
+    serving = `${existing.length} profile(s) from ${registry.root}`;
+    console.log("[understory] auth: a profile API key is required for /mcp and /api");
+    if (process.env.AUTH_TOKEN) {
+      console.error("[understory] AUTH_TOKEN is ignored in profile mode — each profile has its own key");
+    }
+
+    const adminToken = process.env.ADMIN_TOKEN;
+    if (adminToken) {
+      admin = adminRouter(registry, adminToken, async (name) => {
+        if (!gitAutocommit) return;
+        const created = (await registry.memories()).find((m) => m.name === name);
+        if (created) await requireGitReady(created.kb, `profile "${name}"`);
+      });
+      console.log("[understory] admin: profile management enabled at /admin (ADMIN_TOKEN)");
+    } else {
+      console.log("[understory] admin: /admin disabled (set ADMIN_TOKEN, or manage profiles with the CLI)");
+    }
+  } else {
+    const kb = new KnowledgeBase(bundleRoot!, { gitAutocommit });
+    if (gitAutocommit) await requireGitReady(kb, "the bundle");
+    const authToken = process.env.AUTH_TOKEN;
+    if (!authToken && process.env.AUTH_REQUIRED === "true") {
+      throw new Error("AUTH_REQUIRED=true but AUTH_TOKEN is unset — refusing to start open.");
+    }
+    host = singleMemoryHost(kb, authToken);
+    health = healthRouter(kb, bundleRoot!);
+    serving = `bundle ${bundleRoot}`;
+    console.log(
+      authToken
+        ? "[understory] auth: bearer token required for /mcp and /api"
+        : "[understory] auth: disabled (set AUTH_TOKEN to protect /mcp and /api)"
+    );
+  }
+} catch (err) {
+  console.error(`[understory] ${(err as Error).message}`);
+  process.exit(1);
+}
+
+if (gitAutocommit) console.log("[understory] git autocommit: enabled (bundle history is being recorded)");
+
+startDreamer(async () => (await host.memories()).map(({ kb, profile }) => ({ kb, label: profile })));
 
 // Validate LLM config at startup — fail fast with a clear error.
 try {
@@ -50,103 +103,28 @@ try {
   }
 } catch (err) {
   console.error(`[understory] LLM configuration error: ${(err as Error).message}`);
-  console.error("[understory] Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT + LLM_MODEL.");
+  console.error("[understory] Set LLM_API_BASE_URL + LLM_API_KEY, or configure legacy env vars.");
   process.exit(1);
 }
 
-// CORS origin policy. `origin: true` reflected any site's Origin header;
-// combined with optional auth, any page the browser visited could call the
-// memory API cross-origin. Default is now same-origin only (the bundled web UI
-// is served same-origin, so it needs no config). Set CORS_ORIGINS to a comma
-// list to allow specific browser origins, or CORS_ORIGINS=* to restore the old
-// reflect-any behaviour explicitly.
-function resolveCorsOrigin(env: NodeJS.ProcessEnv = process.env): cors.CorsOptions["origin"] {
-  const raw = env.CORS_ORIGINS?.trim();
-  if (!raw) return false;
-  if (raw === "*") return true;
-  const allow = new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
-  return (origin, cb) => {
-    // No Origin header = same-origin or a non-browser client (curl, stdio). Allow.
-    if (!origin || allow.has(origin)) return cb(null, true);
-    cb(new Error(`origin ${origin} not allowed by CORS_ORIGINS`));
-  };
-}
-
-// Expose Mcp-Session-Id so browser MCP clients can read it back off the
-// initialize response.
-app.use(
-  cors({
-    origin: resolveCorsOrigin(),
-    exposedHeaders: ["Mcp-Session-Id"],
-    allowedHeaders: [
-      "Content-Type",
-      "Accept",
-      "Authorization",
-      "Mcp-Session-Id",
-      "Mcp-Protocol-Version",
-      "Last-Event-ID",
-    ],
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
-  })
-);
-app.use(express.json({ limit: "4mb" }));
-
-// Mounted before bearerAuth on purpose: container healthchecks can't carry a
-// token, and /health exposes nothing sensitive (no baseURLs, no concepts).
-app.use(healthRouter(kb, bundleRoot));
-
-// Optional bearer auth (issue #1): protects the memory (/mcp + /api) when
-// AUTH_TOKEN is set. Static web UI stays open and prompts for the token.
-const authToken = process.env.AUTH_TOKEN;
-if (!authToken && process.env.AUTH_REQUIRED === "true") {
-  console.error(
-    "[understory] AUTH_REQUIRED=true but AUTH_TOKEN is unset — refusing to start open."
-  );
-  process.exit(1);
-}
-if (authToken) {
-  app.use(["/mcp", "/api"], bearerAuth(authToken));
-  console.log("[understory] auth: bearer token required for /mcp and /api");
-} else {
-  console.log("[understory] auth: disabled (set AUTH_TOKEN to protect /mcp and /api)");
-}
 console.log(
   `[understory] cors: ${
     process.env.CORS_ORIGINS?.trim() || "same-origin only (set CORS_ORIGINS to allow browsers)"
   }`
 );
 
-app.use("/mcp", mcpRouter(kb));
-app.use("/api", browseRouter(kb));
-app.use("/api", chatRouter(kb));
-app.use("/api", dreamRouter(kb));
+const llmTimeout = resolveLlmTimeout();
+if (llmTimeout.warning) console.error(`[understory] ${llmTimeout.warning}`);
+console.log(`[understory] llm timeout: ${process.env.LLM_TIMEOUT && llmTimeout.ms != null ? process.env.LLM_TIMEOUT.trim() : "none"}`);
 
-// Serve the built web UI in production (single container), with SPA fallback.
+const maxSteps = resolveMaxSteps();
+if (maxSteps.warning) console.error(`[understory] ${maxSteps.warning}`);
+console.log(`[understory] agent max steps: ${maxSteps.steps}`);
+
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
-if (existsSync(webDist)) {
-  app.use(express.static(webDist));
-  app.get(/^(?!\/(api|mcp)).*/, (_req, res) => {
-    res.sendFile(path.join(webDist, "index.html"));
-  });
-}
-
-// JSON error handler. Without this, a malformed body (express.json throwing
-// SyntaxError) or an unhandled route error returns an HTML stack trace page to
-// an API client. Must be registered last and must take four args for Express
-// to recognise it as an error handler.
-app.use((err: Error & { status?: number; statusCode?: number }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (res.headersSent) {
-    // Response already in flight — delegate so Express destroys the socket
-    // rather than trying to write a second set of headers.
-    next(err);
-    return;
-  }
-  const status = err.status ?? err.statusCode ?? 500;
-  if (status >= 500) console.error("[understory] unhandled error:", err.message);
-  res.status(status).json({ error: status >= 500 ? "internal server error" : err.message });
-});
+const app = buildApp(host, { webDist, admin, health });
 
 const port = Number(process.env.PORT ?? 3800);
 app.listen(port, process.env.HOST || "0.0.0.0", () => {
-  console.log(`understory serving bundle ${bundleRoot} on :${port} (web + /api + /mcp)`);
+  console.log(`understory serving ${serving} on :${port} (web + /api + /mcp)`);
 });

@@ -13,8 +13,12 @@ export interface TraceStep {
   write?: boolean;
 }
 
-/** "rolled_back" = the run failed but the bundle was fully restored. */
-export type TraceOutcome = "success" | "rolled_back" | "partial" | "failed" | "truncated";
+/**
+ * "rolled_back": the run failed but the bundle was fully restored.
+ * "step-limit": the run used its whole step budget and was stopped before it finished.
+ * "truncated": legacy name for step-limit, kept so traces saved by earlier versions still render.
+ */
+export type TraceOutcome = "success" | "rolled_back" | "partial" | "failed" | "step-limit" | "truncated";
 
 /** Token accounting for the run (issue #15: context observability). */
 export interface TraceUsage {
@@ -114,8 +118,10 @@ function outcomeMarker(outcome: TraceOutcome): string {
       return "⚠ partial";
     case "failed":
       return "✗";
+    case "step-limit":
+      return "⚠ step limit";
     case "truncated":
-      return "⋯ truncated";
+      return "⚠ step limit";
   }
 }
 

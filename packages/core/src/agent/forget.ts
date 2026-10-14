@@ -209,8 +209,8 @@ export async function runForget(
   // only exist once the removal has really happened.
   await kb.scrubLog(plan.delete);
   await traceStore.remove(plan.traces);
-  for (const p of plan.delete) recordHotDelete(p);
-  clearHotMemory();
+  for (const p of plan.delete) recordHotDelete(kb, p);
+  clearHotMemory(kb);
   clearQueryCache();
   await addTombstones(kb.bundle.root, plan.refs);
   await kb.commitPending(NEUTRAL);

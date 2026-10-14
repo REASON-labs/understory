@@ -83,7 +83,7 @@ describe("GET /api/dream/preview", () => {
 
 describe("GET /api/dream/status", () => {
   it("reports dreaming as disabled when DREAM_INTERVAL is unset", async () => {
-    startDreamer({} as KnowledgeBase);
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
     const body = await (await fetch(`${baseUrl}/api/dream/status`)).json();
     expect(body.enabled).toBe(false);
     expect(body.lastRun).toBeNull();
@@ -91,7 +91,7 @@ describe("GET /api/dream/status", () => {
 
   it("reports the schedule and the resolved signal set once enabled", async () => {
     process.env.DREAM_INTERVAL = "6h";
-    startDreamer({} as KnowledgeBase);
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
 
     const body = await (await fetch(`${baseUrl}/api/dream/status`)).json();
     expect(body.enabled).toBe(true);
@@ -104,7 +104,7 @@ describe("GET /api/dream/status", () => {
 
   it("reports the 5-minute clamp rather than hiding it", async () => {
     process.env.DREAM_INTERVAL = "30s";
-    startDreamer({} as KnowledgeBase);
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
 
     const body = await (await fetch(`${baseUrl}/api/dream/status`)).json();
     expect(body.clamped).toBe(true);
@@ -119,7 +119,7 @@ describe("startDreamer config validation", () => {
     process.env.DREAM_INTERVAL = "6h";
     process.env.DREAM_SIGNALS = "orphans,typo";
 
-    startDreamer({} as KnowledgeBase);
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
 
     expect(getDreamStatus().enabled).toBe(false);
     expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/typo/));
@@ -130,14 +130,14 @@ describe("startDreamer config validation", () => {
     process.env.DREAM_SIGNALS = "insights";
     process.env.DREAM_INSIGHTS = "false";
 
-    startDreamer({} as KnowledgeBase);
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
 
     expect(getDreamStatus().enabled).toBe(false);
   });
 
   it("stays disabled on an unparseable interval", () => {
     process.env.DREAM_INTERVAL = "banana";
-    startDreamer({} as KnowledgeBase);
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
     expect(getDreamStatus().enabled).toBe(false);
   });
 });
@@ -156,7 +156,7 @@ describe("dream run history", () => {
         suppressed: [],
       });
 
-      startDreamer({} as KnowledgeBase);
+      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
       const status = getDreamStatus();
@@ -178,7 +178,7 @@ describe("dream run history", () => {
       process.env.DREAM_INTERVAL = "5m";
       runDream.mockRejectedValue(new Error("provider unreachable"));
 
-      startDreamer({} as KnowledgeBase);
+      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
       expect(getDreamStatus().lastRun).toMatchObject({

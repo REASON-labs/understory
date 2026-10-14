@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   inDirectory,
   appendHistory,
+  findPlainObjectKeys,
   forgottenRefs,
   mergeSources,
   normalizeSources,
@@ -41,6 +42,29 @@ const replacedSchema = z
   .optional()
   .describe(
     "When this write CHANGES a fact the concept previously asserted, list each replaced statement here (short, e.g. 'Office was at 12 Elm St') with an optional reason. The body must no longer contain the old value; this keeps the trail without leaving a contradiction. Omit for pure additions."
+);
+
+/**
+ * Per-key frontmatter patch values (merge semantics): the key's expected scalar/list
+ * type, or null to delete the key. Previously this was `z.record(z.unknown())`, which
+ * let models serialize plain objects into YAML frontmatter and corrupt the bundle (#39).
+ */
+export const frontmatterPatchSchema = z
+  .object({
+    type: z.string().min(1).nullable().optional().describe("Concept kind, e.g. 'API Endpoint'"),
+    title: z.string().nullable().optional(),
+    description: z.string().nullable().optional().describe("One-line summary"),
+    resource: z.string().nullable().optional().describe("Canonical URI of the underlying asset"),
+    tags: z.array(z.string()).nullable().optional(),
+  })
+  .passthrough()
+  .refine(
+    (v) => findPlainObjectKeys(v).length === 0,
+    "Frontmatter values must be scalars or arrays of scalars, never plain objects (e.g. pass 'Description text', not { __type: 'string', __value: ... }). Set a key to null to remove it."
+  )
+  .describe(
+    "Frontmatter keys to merge; set a key to null to remove it. Values must be strings, arrays of strings (for tags), or numbers — never objects." +
+      " Producer-defined keys are allowed with the same value restrictions."
   );
 
 const logSummary = z
@@ -239,26 +263,23 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
           log_summary
         );
         filesChanged.add(c.path);
-        recordHotWrite(c.path);
+        recordHotWrite(kb, c.path);
         trace?.record("write_concept", c.path, [c.path], true);
         return { written: c.path };
       },
     }),
     patch_concept: tool({
       description:
-        "Targeted update of an existing concept: merge frontmatter keys (null deletes a key) and/or replace one top-level '# Section' body section. Prefer this over write_concept for small edits. If you change or correct any fact the concept already stated, you MUST also pass 'replaced'.",
+        "Targeted update of an existing concept: merge frontmatter keys (null deletes a key) and/or replace one heading body section (any level, H1-H6). Prefer this over write_concept for small edits. If you change or correct any fact the concept already stated, you MUST also pass 'replaced'.",
       inputSchema: z.object({
         path: conceptPath,
-        frontmatter: z
-          .record(z.unknown())
-          .optional()
-          .describe("Frontmatter keys to merge; set a key to null to remove it"),
+        frontmatter: frontmatterPatchSchema.optional(),
         replace_section: z
           .object({
             heading: z
               .string()
               .min(1)
-              .describe("Top-level heading name, e.g. 'Schema'. Must be non-empty — to replace the whole body use replace_body instead."),
+              .describe("Heading name (any level, # through ######), e.g. 'Schema'. Must be non-empty — to replace the whole body use replace_body instead."),
             content: z.string().describe("New content for that section"),
           })
           .optional(),
@@ -298,7 +319,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
           log_summary
         );
         filesChanged.add(c.path);
-        recordHotWrite(c.path);
+        recordHotWrite(kb, c.path);
         trace?.record("patch_concept", c.path, [c.path], true);
         return { patched: c.path };
       },
@@ -313,7 +334,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
       execute: async ({ path, log_summary }) => {
         await kb.deleteConcept(path, log_summary);
         filesChanged.add(path);
-        recordHotDelete(path);
+        recordHotDelete(kb, path);
         trace?.record("delete_concept", path, [path], true);
         return { deleted: path };
       },

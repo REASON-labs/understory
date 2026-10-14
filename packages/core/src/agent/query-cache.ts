@@ -63,10 +63,12 @@ export async function runQueryCached(
     return { ...(await runner(kb, question, options)), cached: false, source: "deep" };
   }
 
+  // The bundle root is part of the key: two memories hosted by one process
+  // can share a fingerprint (two empty bundles do), and must never share answers.
   const fingerprint = await bundleFingerprint(kb);
   const key = createHash("sha256")
     .update(
-      `${fingerprint}\n${normalize(question)}\n${options.model ?? ""}\n${scopeKey(options.scope)}`
+      `${kb.bundle.root}\n${fingerprint}\n${normalize(question)}\n${options.model ?? ""}\n${scopeKey(options.scope)}`
     )
     .digest("hex");
 
@@ -86,15 +88,18 @@ export async function runQueryCached(
   // cache so identical repeats become instant.
   const hotAnswer = await hot(kb, question, options);
   if (hotAnswer !== null) {
-    const result: QueryResult = { answer: hotAnswer, steps: 0, traceId: "", truncated: false };
+    const result: QueryResult = { answer: hotAnswer, steps: 0, traceId: "" };
     store(key, result, ttl);
     return { ...result, cached: false, source: "hot" };
   }
 
   // Layer 3: deep memory — the full agent loop. Its answer feeds the hot set.
   const result = await runner(kb, question, options);
-  store(key, result, ttl);
-  recordHotQuery(question, result.answer);
+  // A run cut off by the step budget has no answer worth remembering.
+  if (!result.stepLimited) {
+    store(key, result, ttl);
+    recordHotQuery(kb, question, result.answer);
+  }
   return { ...result, cached: false, source: "deep" };
 }
 

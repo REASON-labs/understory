@@ -10,55 +10,22 @@ import { withFallback } from "../providers/fallback.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildReadTools, buildWriteTools, formatTree, type QueryScope } from "./tools.js";
 import { TraceRecorder, TraceStore, type TraceUsage } from "./trace.js";
+import { parseDuration } from "../util/duration.js";
 
 const DEFAULT_MAX_STEPS = 12;
 
-/**
- * Per-run step cap. A small local model that wanders can hit this; when it does,
- * generateText/streamText just *return* what they have — no throw — so a
- * truncated run was indistinguishable from a real completion (and, for a
- * mutation, its partial writes committed as "success"). Configurable via
- * AGENT_MAX_STEPS, or per-call via AgentOptions.maxSteps (the dreamer passes a
- * higher cap so a long consolidation isn't clipped at the interactive default).
- */
-function resolveMaxSteps(
-  options: AgentOptions = {},
-  env: NodeJS.ProcessEnv = process.env
-): number {
-  if (typeof options.maxSteps === "number" && options.maxSteps > 0) {
-    return Math.floor(options.maxSteps);
-  }
-  const parsed = env.AGENT_MAX_STEPS ? Number(env.AGENT_MAX_STEPS) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_STEPS;
-}
-
-/**
- * Distinguish a step-limit stop from the model choosing to finish. The AI SDK
- * reports finishReason on the aggregate result; when stopWhen fires the model
- * was mid-thought, so finishReason is anything but "stop" and the whole step
- * budget was spent.
- */
-function wasTruncated(
-  result: { steps: readonly unknown[]; finishReason?: string },
-  maxSteps: number
-): boolean {
-  return result.steps.length >= maxSteps && result.finishReason !== "stop";
-}
-
 export interface AgentOptions {
   model?: string;
+  /** Cancel the model run when the caller disconnects or explicitly aborts. */
+  abortSignal?: AbortSignal;
+  /** Total deadline for the model run. Defaults to LLM_TIMEOUT; no deadline when neither is set. */
+  timeoutMs?: number;
   /**
    * Caller-imposed retrieval scope, supplied by an MCP client through
    * memory_query. Honoured by runQuery only: a mutation must be able to write
    * anywhere in the bundle, so scoping one would be actively harmful.
    */
   scope?: QueryScope;
-  /**
-   * Aborts the underlying model call. The chat endpoint wires this to the
-   * HTTP request so a client disconnect stops the agent loop instead of
-   * letting it keep spending tokens on a stream nobody is reading.
-   */
-  abortSignal?: AbortSignal;
   /**
    * Per-run step cap override. Falls back to AGENT_MAX_STEPS, then 12. The
    * dreamer sets this higher so a long consolidation isn't clipped at the
@@ -71,8 +38,8 @@ export interface QueryResult {
   answer: string;
   steps: number;
   traceId: string;
-  /** True if the run hit the step cap rather than the model finishing. */
-  truncated: boolean;
+  /** True when the run used every step without reaching an answer; `answer` then says so. */
+  stepLimited?: boolean;
 }
 
 export interface MutationResult {
@@ -80,12 +47,6 @@ export interface MutationResult {
   filesChanged: string[];
   steps: number;
   traceId: string;
-  /**
-   * True if the run hit the step cap rather than the model finishing. The
-   * writes still committed (a step-limit stop doesn't throw, so the transaction
-   * saw success) — this flags that the edit may be half-formed.
-   */
-  truncated: boolean;
 }
 
 export type MutationOutcome =
@@ -103,9 +64,10 @@ export type MutationOutcome =
       traceId: string;
     }
   /**
-   * The run failed AND rollback could not fully restore the bundle, or
-   * rollback was disabled via MUTATION_ROLLBACK=false. `filesChanged` are
-   * left on disk. This is the case that needs a human.
+   * The run left files changed that were not undone: it hit the step limit
+   * after writing, or it failed AND rollback could not fully restore the
+   * bundle, or rollback was disabled via MUTATION_ROLLBACK=false.
+   * `filesChanged` are on disk. This is the case that needs a human.
    */
   | {
       ok: false;
@@ -189,6 +151,86 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * The configured total deadline for one model run, from LLM_TIMEOUT
+ * ("10m", "2h", ...). There is no deadline unless one is configured: healthy
+ * runs on local hardware routinely take many minutes, so any default would
+ * abort working setups. An unparseable value means no deadline plus a
+ * warning, never a silent fallback.
+ */
+export function resolveLlmTimeout(env: NodeJS.ProcessEnv = process.env): {
+  ms: number | null;
+  warning?: string;
+} {
+  const raw = env.LLM_TIMEOUT;
+  if (raw === undefined || raw.trim() === "") return { ms: null };
+  const ms = parseDuration(raw);
+  if (ms === null || ms <= 0) {
+    return {
+      ms: null,
+      warning: `LLM_TIMEOUT="${raw}" is not a positive duration (use e.g. 300s, 10m, 2h) — no deadline applied`,
+    };
+  }
+  return { ms };
+}
+
+/**
+ * How many model steps one agent run may take, from AGENT_MAX_STEPS. A step
+ * is one model call plus the tool calls it asks for. An unusable value means
+ * the default plus a warning, never a silent fallback.
+ */
+export function resolveMaxSteps(env: NodeJS.ProcessEnv = process.env): {
+  steps: number;
+  warning?: string;
+} {
+  const raw = env.AGENT_MAX_STEPS;
+  if (raw === undefined || raw.trim() === "") return { steps: DEFAULT_MAX_STEPS };
+  const steps = Number(raw);
+  if (!Number.isInteger(steps) || steps < 1) {
+    return {
+      steps: DEFAULT_MAX_STEPS,
+      warning: `AGENT_MAX_STEPS="${raw}" is not a positive whole number — using ${DEFAULT_MAX_STEPS}`,
+    };
+  }
+  return { steps };
+}
+
+/** The step cap for one run: a per-call override (the dreamer's) wins over AGENT_MAX_STEPS. */
+function effectiveMaxSteps(options: AgentOptions): number {
+  if (typeof options.maxSteps === "number" && options.maxSteps > 0) {
+    return Math.floor(options.maxSteps);
+  }
+  return resolveMaxSteps().steps;
+}
+
+/**
+ * A run that used every step and whose last step still asked for tools was
+ * cut off by the budget. It did not finish, whatever it wrote on the way.
+ */
+function hitStepLimit(
+  result: { steps: ReadonlyArray<unknown>; finishReason: string },
+  maxSteps: number
+): boolean {
+  return result.steps.length >= maxSteps && result.finishReason === "tool-calls";
+}
+
+/**
+ * Abort signal for a model run: fires when the caller cancels (always
+ * honored) or when the configured deadline expires (opt-in). Undefined when
+ * neither applies.
+ */
+export function modelAbortSignal(
+  options: AgentOptions,
+  env: NodeJS.ProcessEnv = process.env
+): AbortSignal | undefined {
+  const timeoutMs = options.timeoutMs ?? resolveLlmTimeout(env).ms;
+  const signals: AbortSignal[] = [];
+  if (options.abortSignal) signals.push(options.abortSignal);
+  if (timeoutMs != null) signals.push(AbortSignal.timeout(timeoutMs));
+  if (signals.length === 0) return undefined;
+  return signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+}
+
 /** Sum token usage across the run's steps (issue #15). Undefined when the provider reports none. */
 function sumStepsUsage(
   steps: ReadonlyArray<{ usage?: { inputTokens?: number; outputTokens?: number } }>
@@ -214,29 +256,28 @@ export async function runQuery(
 ): Promise<QueryResult> {
   const ctx = await promptContext(kb, "query", options.scope);
   const recorder = new TraceRecorder();
+  const maxSteps = effectiveMaxSteps(options);
   let modelChain: string[] = [];
   try {
     const resolved = await resolveAgentModel(options, "query");
     modelChain = resolved.modelChain;
-    const maxSteps = resolveMaxSteps(options);
     const result = await generateText({
       model: resolved.model,
+      abortSignal: modelAbortSignal(options),
       system: buildSystemPrompt(ctx),
       prompt: question,
       tools: buildReadTools(kb, recorder, options.scope),
       stopWhen: stepCountIs(maxSteps),
     });
-    const truncated = wasTruncated(result, maxSteps);
-    const trace = recorder.finalize(
-      "query",
-      question,
-      result.text,
-      truncated ? "truncated" : "success",
-      modelChain,
-      sumStepsUsage(result.steps)
-    );
+    if (hitStepLimit(result, maxSteps)) {
+      const answer = `The search used all ${maxSteps} steps without reaching an answer. Raise AGENT_MAX_STEPS to let it look further.`;
+      const trace = recorder.finalize("query", question, answer, "step-limit", modelChain, sumStepsUsage(result.steps));
+      await traceStore(kb).save(trace);
+      return { answer, steps: result.steps.length, traceId: trace.id, stepLimited: true };
+    }
+    const trace = recorder.finalize("query", question, result.text, "success", modelChain, sumStepsUsage(result.steps));
     await traceStore(kb).save(trace);
-    return { answer: result.text, steps: result.steps.length, traceId: trace.id, truncated };
+    return { answer: result.text, steps: result.steps.length, traceId: trace.id };
   } catch (err) {
     const trace = recorder.finalize("query", question, errorMessage(err), "failed", modelChain);
     await traceStore(kb).save(trace);
@@ -253,14 +294,15 @@ export async function runMutation(
   const ctx = await promptContext(kb, "mutate");
   const recorder = new TraceRecorder();
   const filesChanged = new Set<string>();
+  const maxSteps = effectiveMaxSteps(options);
   let modelChain: string[] = [];
-  const maxSteps = resolveMaxSteps(options);
 
   const runAgent = async () => {
     const resolved = await resolveAgentModel(options, "mutate");
     modelChain = resolved.modelChain;
     return generateText({
       model: resolved.model,
+      abortSignal: modelAbortSignal(options),
       system: buildSystemPrompt(ctx),
       prompt: instruction,
       tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
@@ -273,20 +315,30 @@ export async function runMutation(
     // The whole agent loop is one transaction: a model that dies at step 7
     // of 12 must not leave the first six writes behind.
     const result = rollbackEnabled() ? await kb.transaction(runAgent) : await runAgent();
-    // A step-limit stop doesn't throw, so its partial writes commit like any
-    // success. We can only tell truncation from completion by the step budget —
-    // record it distinctly so a clipped mutation is visible in the trace
-    // instead of masquerading as a clean run. (Whether to *roll back* on
-    // truncation is a later decision; here we surface, not discard.)
-    const truncated = wasTruncated(result, maxSteps);
-    const trace = recorder.finalize(
-      "mutation",
-      instruction,
-      result.text,
-      truncated ? "truncated" : "success",
-      modelChain,
-      sumStepsUsage(result.steps)
-    );
+    if (hitStepLimit(result, maxSteps)) {
+      // A step-limit stop does not throw, so the transaction commits what was
+      // written. Report it as partial so a half-formed edit is not "success".
+      const files = [...filesChanged].sort();
+      const message =
+        `The run used all ${maxSteps} steps and was stopped before it finished` +
+        (files.length > 0 ? "; the files it changed may be incomplete" : " or changed any file") +
+        `. Raise AGENT_MAX_STEPS to give it more room.`;
+      const trace = recorder.finalize("mutation", instruction, message, "step-limit", modelChain, sumStepsUsage(result.steps));
+      await traceStore(kb).save(trace);
+      return files.length > 0
+        ? { ok: false, status: "partial", filesChanged: files, error: message, traceId: trace.id }
+        : { ok: false, status: "failed", error: message };
+    }
+    // A run that wrote nothing AND said nothing is a stalled/flaked model.
+    // Writing nothing while explaining why (knowledge already present,
+    // nothing genuinely related to link) is a legitimate outcome.
+    if (filesChanged.size === 0 && result.text.trim() === "") {
+      const message = "Mutation returned an empty response without changing any files.";
+      const trace = recorder.finalize("mutation", instruction, message, "failed", modelChain, sumStepsUsage(result.steps));
+      await traceStore(kb).save(trace);
+      return { ok: false, status: "failed", error: message };
+    }
+    const trace = recorder.finalize("mutation", instruction, result.text, "success", modelChain, sumStepsUsage(result.steps));
     await traceStore(kb).save(trace);
     return {
       ok: true,
@@ -295,7 +347,6 @@ export async function runMutation(
         filesChanged: [...filesChanged].sort(),
         steps: result.steps.length,
         traceId: trace.id,
-        truncated,
       },
     };
   } catch (err) {
@@ -355,6 +406,7 @@ export async function streamChat(
   const ctx = await promptContext(kb, "chat");
   const recorder = new TraceRecorder();
   const filesChanged = new Set<string>();
+  const maxSteps = effectiveMaxSteps(options);
   let modelChain: string[] = [];
   // The user turn that started this run, for the trace record.
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
@@ -369,23 +421,21 @@ export async function streamChat(
   try {
     const resolved = await resolveAgentModel(options, "chat");
     modelChain = resolved.modelChain;
-    const maxSteps = resolveMaxSteps(options);
     const result = streamText({
       model: resolved.model,
+      abortSignal: modelAbortSignal(options),
       system: buildSystemPrompt(ctx),
       messages,
       tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
       stopWhen: stepCountIs(maxSteps),
-      abortSignal: options.abortSignal,
-      onFinish: async ({ text, finishReason, steps, totalUsage }) => {
+      onFinish: async ({ text, totalUsage, steps, finishReason }) => {
         // Persist only turns that actually touched the bundle.
         if (recorder.steps.length > 0) {
           const usage =
             totalUsage && (totalUsage.inputTokens != null || totalUsage.outputTokens != null)
               ? { inputTokens: totalUsage.inputTokens ?? 0, outputTokens: totalUsage.outputTokens ?? 0 }
               : undefined;
-          const outcome =
-            steps.length >= maxSteps && finishReason !== "stop" ? "truncated" : "success";
+          const outcome = hitStepLimit({ steps, finishReason }, maxSteps) ? "step-limit" : "success";
           await traceStore(kb).save(recorder.finalize("chat", input, text, outcome, modelChain, usage));
         }
       },
