@@ -72,6 +72,12 @@ export interface QueryTrace extends TraceSummary {
   answer: string;
 }
 
+/** Which memory this session is talking to. `profile` is null when the server hosts a single memory. */
+export interface ProfileInfo {
+  mode: "single" | "profiles";
+  profile: string | null;
+}
+
 export interface AppConfig {
   model: string;
   format: "openai" | "anthropic" | string;
@@ -96,15 +102,40 @@ export function authHeaders(): Record<string, string> {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    /** On a 401: whether the server wants a profile key or its single AUTH_TOKEN. */
+    public readonly authMode?: ProfileInfo["mode"]
+  ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
+/**
+ * Resolve an API path against the page URL so calls work when the UI is served
+ * behind a path-prefixing reverse proxy (e.g. https://host/understory/), where
+ * a root-absolute "/api/..." would escape the prefix. Matches how the page's
+ * relative asset URLs resolve.
+ */
+export function apiUrl(path: string): string {
+  return new URL(path.replace(/^\//, ""), document.baseURI).toString();
+}
+
 async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: authHeaders() });
-  if (!res.ok) throw new ApiError(res.status, `${res.status} ${await res.text()}`);
+  const res = await fetch(apiUrl(url), { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.text();
+    let authMode: ProfileInfo["mode"] | undefined;
+    try {
+      const mode = (JSON.parse(body) as { mode?: unknown }).mode;
+      if (mode === "single" || mode === "profiles") authMode = mode;
+    } catch {
+      // Not JSON: no mode to report.
+    }
+    throw new ApiError(res.status, `${res.status} ${body}`, authMode);
+  }
   return res.json();
 }
 
@@ -118,4 +149,5 @@ export const api = {
   traces: () => get<TraceSummary[]>("/api/traces"),
   trace: (id: string) => get<QueryTrace>(`/api/trace?id=${encodeURIComponent(id)}`),
   config: () => get<AppConfig>("/api/config"),
+  profile: () => get<ProfileInfo>("/api/profile"),
 };

@@ -1,6 +1,6 @@
 import { inDirectory, matchesFilters, type KnowledgeBase } from "../okf/index.js";
 import { parseDuration } from "../util/duration.js";
-import type { AgentOptions } from "./agent.js";
+import { modelAbortSignal, type AgentOptions } from "./agent.js";
 
 /**
  * Hot memory: a small working set of recently written concepts and recent
@@ -33,38 +33,56 @@ const DEFAULT_TTL_MS = 3_600_000;
 const MAX_EXCERPT_CHARS = 1500;
 
 // Module-level: survives per-request McpServer instances (stateless HTTP).
-const hotConcepts = new Map<string, number>(); // path → touchedAt
-let hotQAs: HotQA[] = [];
+// Keyed by bundle root — one process can host several isolated memories, and
+// one memory's recent answers must never be offered to another.
+interface HotSet {
+  concepts: Map<string, number>; // path → touchedAt
+  qas: HotQA[];
+}
+const hotSets = new Map<string, HotSet>();
+
+function hotSet(kb: KnowledgeBase): HotSet {
+  const root = kb.bundle.root;
+  let set = hotSets.get(root);
+  if (!set) {
+    set = { concepts: new Map(), qas: [] };
+    hotSets.set(root, set);
+  }
+  return set;
+}
 
 /** Called by the write tools after any concept write/patch. */
-export function recordHotWrite(path: string): void {
-  hotConcepts.delete(path);
-  hotConcepts.set(path, Date.now());
-  while (hotConcepts.size > MAX_CONCEPTS) {
-    const oldest = hotConcepts.keys().next().value;
+export function recordHotWrite(kb: KnowledgeBase, path: string): void {
+  const set = hotSet(kb);
+  set.concepts.delete(path);
+  set.concepts.set(path, Date.now());
+  while (set.concepts.size > MAX_CONCEPTS) {
+    const oldest = set.concepts.keys().next().value;
     if (oldest === undefined) break;
-    hotConcepts.delete(oldest);
+    set.concepts.delete(oldest);
   }
   // A write may contradict previous answers — drop them.
-  hotQAs = [];
+  set.qas = [];
 }
 
 /** Called on deletes: the concept leaves the hot set; answers may be stale. */
-export function recordHotDelete(path: string): void {
-  hotConcepts.delete(path);
-  hotQAs = [];
+export function recordHotDelete(kb: KnowledgeBase, path: string): void {
+  const set = hotSet(kb);
+  set.concepts.delete(path);
+  set.qas = [];
 }
 
 /** Called after a deep query completes. */
-export function recordHotQuery(question: string, answer: string): void {
-  hotQAs.push({ question, answer, at: Date.now() });
-  if (hotQAs.length > MAX_QAS) hotQAs = hotQAs.slice(-MAX_QAS);
+export function recordHotQuery(kb: KnowledgeBase, question: string, answer: string): void {
+  const set = hotSet(kb);
+  set.qas.push({ question, answer, at: Date.now() });
+  if (set.qas.length > MAX_QAS) set.qas = set.qas.slice(-MAX_QAS);
 }
 
-/** Test hook. */
-export function clearHotMemory(): void {
-  hotConcepts.clear();
-  hotQAs = [];
+/** Drop hot state: for one memory (e.g. a removed profile), or all of it (test hook). */
+export function clearHotMemory(kb?: KnowledgeBase): void {
+  if (kb) hotSets.delete(kb.bundle.root);
+  else hotSets.clear();
 }
 
 export type HotGenerate = (
@@ -91,8 +109,9 @@ export async function hotLookup(
 
   const scope = options.scope;
   const sections: string[] = [];
+  const set = hotSet(kb);
 
-  for (const [path, touchedAt] of hotConcepts) {
+  for (const [path, touchedAt] of set.concepts) {
     if (touchedAt < cutoff) continue;
     if (!inDirectory(path, scope?.directory)) continue;
     try {
@@ -104,12 +123,12 @@ export async function hotLookup(
           c.body.slice(0, MAX_EXCERPT_CHARS)
       );
     } catch {
-      hotConcepts.delete(path); // deleted behind our back
+      set.concepts.delete(path); // deleted behind our back
     }
   }
   // Scoped queries skip cached Q&A entirely — see the scope rules above.
   if (!scope) {
-    for (const qa of hotQAs) {
+    for (const qa of set.qas) {
       if (qa.at < cutoff) continue;
       sections.push(`PREVIOUS Q&A\nQ: ${qa.question}\nA: ${qa.answer}`);
     }
@@ -146,6 +165,12 @@ const defaultGenerate: HotGenerate = async (system, prompt, options) => {
     model = await providers.createModel(options.model ? { ...cfg, model: options.model } : cfg);
   }
   const { generateText } = await import("ai");
-  const result = await generateText({ model, system, prompt, temperature: 0 });
+  const result = await generateText({
+    model,
+    abortSignal: modelAbortSignal(options),
+    system,
+    prompt,
+    temperature: 0,
+  });
   return result.text;
 };

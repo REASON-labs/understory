@@ -148,6 +148,142 @@ describe("patch", () => {
     expect(out).toContain("[1] [X](https://x.com)");
     expect(out).toContain("just a body");
   });
+
+  it("rejects plain objects in patch frontmatter and leaves the file untouched (issue #39)", async () => {
+    await kb.writeConcept("/doc.md", { type: "T", description: "orig" }, "body", "add");
+    // The exact corruption shapes observed in the wild.
+    const badShapes = [
+      { __type: "string", __value: "typed placeholder" },
+      {},
+      { homelab: true, proxmox: true },
+      [{ nested: true }],
+      ["ok", { notOk: 1 }],
+    ];
+    for (const value of badShapes) {
+      await expect(
+        kb.patchConcept("/doc.md", { frontmatter: { description: value as unknown } }, "patch")
+      ).rejects.toMatchObject({ code: "INVALID_FRONTMATTER" });
+    }
+    const read = await kb.readConcept("/doc.md");
+    expect(read.frontmatter.description).toBe("orig");
+  });
+
+  it("still merges scalar/list patches and null-deletes keys", async () => {
+    await kb.writeConcept("/doc2.md", { type: "T", title: "Old", tags: ["a"] }, "body", "add");
+    const patched = await kb.patchConcept(
+      "/doc2.md",
+      { frontmatter: { title: null, description: "new line", tags: ["b", "c"], custom: 42 } },
+      "patch"
+    );
+    expect(patched.frontmatter.title).toBeUndefined();
+    expect(patched.frontmatter.description).toBe("new line");
+    expect(patched.frontmatter.tags).toEqual(["b", "c"]);
+    expect(patched.frontmatter.custom).toBe(42);
+  });
+
+  describe("structured producer-defined keys that already exist (OKF allows them)", () => {
+    const imported =
+      "---\ntype: API Endpoint\ntitle: Billing\nowner:\n  team: payments\n  oncall: pay-oncall\n---\nBody.\n\n# Notes\n\nold\n";
+
+    beforeEach(async () => {
+      await fs.mkdir(path.join(root, "apis"), { recursive: true });
+      await fs.writeFile(path.join(root, "apis/billing.md"), imported);
+    });
+
+    it("are preserved by a patch that does not touch them", async () => {
+      const patched = await kb.patchConcept(
+        "/apis/billing.md",
+        { frontmatter: { description: "Charges" }, replaceSection: { heading: "Notes", content: "new" } },
+        "patch"
+      );
+      expect(patched.frontmatter.owner).toEqual({ team: "payments", oncall: "pay-oncall" });
+      expect(patched.frontmatter.description).toBe("Charges");
+      expect(patched.body).toContain("new");
+    });
+
+    it("are preserved by a full rewrite that carries them forward unchanged", async () => {
+      const existing = await kb.readConcept("/apis/billing.md");
+      const written = await kb.writeConcept("/apis/billing.md", { ...existing.frontmatter, title: "Billing API" }, "Rewritten.", "rewrite");
+      expect(written.frontmatter.owner).toEqual({ team: "payments", oncall: "pay-oncall" });
+    });
+
+    it("cannot be altered into a different object, or introduced on a new concept", async () => {
+      await expect(
+        kb.patchConcept("/apis/billing.md", { frontmatter: { owner: { team: "someone-else" } } }, "patch")
+      ).rejects.toMatchObject({ code: "INVALID_FRONTMATTER" });
+      await expect(
+        kb.writeConcept("/apis/new.md", { type: "T", owner: { team: "x" } }, "body", "add")
+      ).rejects.toMatchObject({ code: "INVALID_FRONTMATTER" });
+      expect((await kb.readConcept("/apis/billing.md")).frontmatter.owner).toEqual({ team: "payments", oncall: "pay-oncall" });
+    });
+
+    it("do not excuse an object in a standard key that is already on disk", async () => {
+      await fs.writeFile(path.join(root, "apis/broken.md"), "---\ntype: T\ndescription: {}\n---\nBody.\n");
+      // A body-only patch must not re-save the broken description...
+      await expect(
+        kb.patchConcept("/apis/broken.md", { replaceBody: "New body." }, "patch")
+      ).rejects.toThrow(/description/);
+      // ...and repairing the key in the same patch goes through.
+      const repaired = await kb.patchConcept("/apis/broken.md", { frontmatter: { description: "Fixed" }, replaceBody: "New body." }, "repair");
+      expect(repaired.frontmatter.description).toBe("Fixed");
+    });
+  });
+
+  it("rejects plain objects in write_concept frontmatter too (issue #39)", async () => {
+    await expect(
+      kb.writeConcept("/x.md", { type: "T", tags: { a: true } as never }, "body", "add")
+    ).rejects.toMatchObject({ code: "INVALID_FRONTMATTER" });
+  });
+});
+
+describe("replaceSection (#34)", () => {
+  it("replaces under a ## heading instead of appending a duplicate section", () => {
+    const body = "# Title\n\nIntro.\n\n## Goals\n\nold\n\n## Notes\n\nn1\n";
+    const out = replaceSection(body, "## Goals", "new goals");
+    expect(out).toBe("# Title\n\nIntro.\n\n## Goals\n\nnew goals\n\n## Notes\n\nn1\n");
+  });
+
+  it("replaces the full section, including nested subsections, up to the next same-or-higher heading", () => {
+    const body = "## Goals\n\na\n\n### Detail\n\nd\n\n## Notes\n\nn\n";
+    const out = replaceSection(body, "Goals", "fresh");
+    expect(out).toBe("## Goals\n\nfresh\n\n## Notes\n\nn\n");
+  });
+
+  it("matches headings written with an ATX closing hash sequence", () => {
+    const body = "# Title\n\nintro\n\n## Goals ##\n\nold\n\n## Notes\n\nn\n";
+    const out = replaceSection(body, "## Goals", "new goals");
+    expect(out).toBe("# Title\n\nintro\n\n## Goals ##\n\nnew goals\n\n## Notes\n\nn\n");
+  });
+
+  it("strips a duplicated heading line at the top of the replacement content", () => {
+    const body = "# Title\n\n## Gotchas\n\nold\n";
+    const out = replaceSection(body, "## Gotchas", "## Gotchas\n\n- fresh gotcha");
+    expect(out).toBe("# Title\n\n## Gotchas\n\n- fresh gotcha\n");
+    expect(out.split("\n").filter((l) => l.trim() === "## Gotchas").length).toBe(1);
+  });
+
+  it("strips a duplicated closing-hash heading line at the top of the replacement content", () => {
+    const body = "# Title\n\n## Gotchas ##\n\nold\n";
+    const out = replaceSection(body, "## Gotchas", "## Gotchas ##\n\n- fresh gotcha");
+    expect(out).toBe("# Title\n\n## Gotchas ##\n\n- fresh gotcha\n");
+  });
+
+  it("throws on ambiguous multi-match instead of editing the first hit", () => {
+    const body = "## A\n\nx\n\n## B\n\nx\n\n## A\n\ny\n";
+    expect(() => replaceSection(body, "A", "z")).toThrow(/found 2 times/);
+  });
+
+  it("does not read a comment inside a fenced code block as a heading", () => {
+    const fence = "```";
+    const body = `# T\n\n## Setup\n\n${fence}bash\n# install deps\nnpm i\n${fence}\n\ntail\n\n## Run\n\n${fence}bash\n# Setup\nmake\n${fence}\n`;
+    const out = replaceSection(body, "Setup", "new setup");
+    expect(out).toBe(`# T\n\n## Setup\n\nnew setup\n\n## Run\n\n${fence}bash\n# Setup\nmake\n${fence}\n`);
+  });
+
+  it("still appends a top-level section when absent", () => {
+    const out = replaceSection("body only", "Citations", "[1]");
+    expect(out).toBe("body only\n\n# Citations\n\n[1]\n");
+  });
 });
 
 describe("search", () => {
@@ -326,7 +462,7 @@ describe("git autocommit readiness (#21)", () => {
     expect(log.length).toBeGreaterThanOrEqual(2);
     expect(log[0]).toContain("creation");
     expect(log[log.length - 1]).toContain("initialize memory history");
-  });
+  }, 30_000); // git is slow on Windows, especially under parallel test load
 
   it("is a no-op when autocommit is not requested", async () => {
     const ready = await kb.ensureGitReady();

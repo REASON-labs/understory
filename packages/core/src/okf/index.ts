@@ -1,5 +1,5 @@
 export * from "./types.js";
-export { parseDoc, serializeDoc, hasNonEmptyType } from "./frontmatter.js";
+export { parseDoc, serializeDoc, hasNonEmptyType, containsPlainObject, findPlainObjectKeys } from "./frontmatter.js";
 export { Bundle, BundleError, replaceSection } from "./bundle.js";
 export { regenerateIndex, regenerateIndexChain, pruneEmptyDirs } from "./indexer.js";
 export { appendLog, readLog } from "./logger.js";

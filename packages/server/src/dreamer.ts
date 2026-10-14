@@ -20,6 +20,8 @@ export interface DreamRunRecord {
   signals: { kind: string; count: number }[];
   suppressed: { kind: string; count: number }[];
   error?: string;
+  /** Which memory ran, when several are hosted (profiles). */
+  label?: string;
 }
 
 export interface DreamStatus {
@@ -93,12 +95,20 @@ function record(entry: DreamRunRecord): void {
   while (history.length > MAX_HISTORY) history.pop();
 }
 
+/** A memory the dreamer should consolidate; `label` names it in the logs. */
+export interface DreamTarget {
+  kb: KnowledgeBase;
+  label: string | null;
+}
+
 /**
  * Background dreamer: runs a consolidation pass every DREAM_INTERVAL
  * (e.g. "6h"). Opt-in — unset means no background token spend. The first
- * run happens one interval after boot, never at startup.
+ * run happens one interval after boot, never at startup. With several
+ * memories hosted, they are dreamed one after another, never in parallel:
+ * a local model serves one run at a time.
  */
-export function startDreamer(kb: KnowledgeBase): void {
+export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
   const raw = process.env.DREAM_INTERVAL;
   const interval = parseDuration(raw);
   if (!interval) {
@@ -147,32 +157,55 @@ export function startDreamer(kb: KnowledgeBase): void {
     const startedAt = new Date();
     const t0 = Date.now();
     try {
-      const report = await runDream(kb);
-      record({
-        startedAt: startedAt.toISOString(),
-        durationMs: Date.now() - t0,
-        ran: report.ran,
-        outcome: report.outcome,
-        reason: report.reason,
-        summary: report.summary,
-        filesChanged: report.filesChanged ?? [],
-        signals: report.signals?.map((s) => ({ kind: s.kind, count: s.count })) ?? [],
-        suppressed: report.suppressed ?? [],
-      });
-
-      if (!report.ran) {
-        console.log(`[understory] dream skipped: ${report.reason}`);
-      } else if (report.outcome === "success") {
-        console.log(
-          `[understory] dream complete: ${report.filesChanged?.length ?? 0} file(s) changed — ${truncate(report.summary ?? "", 200)}`
-        );
-      } else {
-        // Anything other than success is worth stderr: this ran unattended.
-        console.error(
-          `[understory] dream ${report.outcome}: ${truncate(report.summary ?? "", 200)}`
-        );
+      // One memory after another: a local model serves one run at a time.
+      for (const { kb, label } of await targets()) {
+        const tag = label ? ` [${label}]` : "";
+        const memStart = new Date();
+        const memT0 = Date.now();
+        try {
+          const report = await runDream(kb);
+          record({
+            startedAt: memStart.toISOString(),
+            durationMs: Date.now() - memT0,
+            ran: report.ran,
+            outcome: report.outcome,
+            reason: report.reason,
+            summary: report.summary,
+            filesChanged: report.filesChanged ?? [],
+            signals: report.signals?.map((s) => ({ kind: s.kind, count: s.count })) ?? [],
+            suppressed: report.suppressed ?? [],
+            ...(label ? { label } : {}),
+          });
+          if (!report.ran) {
+            console.log(`[understory] dream skipped${tag}: ${report.reason}`);
+          } else if (report.outcome === "success") {
+            console.log(
+              `[understory] dream complete${tag}: ${report.filesChanged?.length ?? 0} file(s) changed — ${truncate(report.summary ?? "", 200)}`
+            );
+          } else {
+            // Anything other than success is worth stderr: this ran unattended.
+            console.error(
+              `[understory] dream ${report.outcome}${tag}: ${truncate(report.summary ?? "", 200)}`
+            );
+          }
+        } catch (err) {
+          const message = (err as Error).message;
+          record({
+            startedAt: memStart.toISOString(),
+            durationMs: Date.now() - memT0,
+            ran: false,
+            reason: "threw",
+            filesChanged: [],
+            signals: [],
+            suppressed: [],
+            error: message,
+            ...(label ? { label } : {}),
+          });
+          console.error(`[understory] dream failed${tag}: ${message}`);
+        }
       }
     } catch (err) {
+      // Reached only if listing the memories itself failed.
       const message = (err as Error).message;
       record({
         startedAt: startedAt.toISOString(),

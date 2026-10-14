@@ -7,7 +7,7 @@
  *     -- node <repo>/packages/server/dist/mcp/stdio.js
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { KnowledgeBase, resolveFallbackConfig, resolveModelConfig } from "@understory/core";
+import { KnowledgeBase, resolveFallbackConfig, resolveLlmTimeout, resolveMaxSteps, resolveModelConfig } from "@understory/core";
 import { buildMcpServer } from "./server.js";
 
 const bundleRoot = process.env.BUNDLE_ROOT;
@@ -36,17 +36,27 @@ try {
   process.exit(1);
 }
 
+const llmTimeout = resolveLlmTimeout();
+if (llmTimeout.warning) console.error(`[understory] ${llmTimeout.warning}`);
+console.error(`[understory] llm timeout: ${process.env.LLM_TIMEOUT && llmTimeout.ms != null ? process.env.LLM_TIMEOUT.trim() : "none"}`);
+
+const maxSteps = resolveMaxSteps();
+if (maxSteps.warning) console.error(`[understory] ${maxSteps.warning}`);
+console.error(`[understory] agent max steps: ${maxSteps.steps}`);
+
 const kb = new KnowledgeBase(bundleRoot, {
   gitAutocommit: process.env.GIT_AUTOCOMMIT !== "false",
 });
 
-if (process.env.GIT_AUTOCOMMIT === "true") {
+// Fork default: autocommit on, so readiness is checked unless explicitly disabled.
+if (process.env.GIT_AUTOCOMMIT !== "false") {
   const gitReady = await kb.ensureGitReady();
   if (!gitReady.ok) {
-    console.error(`[understory] GIT_AUTOCOMMIT=true but autocommit cannot work: ${gitReady.reason}`);
+    console.error(`[understory] git autocommit is on (the default; set GIT_AUTOCOMMIT=false to disable) but cannot work: ${gitReady.reason}`);
     process.exit(1);
   }
-  console.log("[understory] git autocommit: enabled (bundle history is being recorded)");
+  // stderr: stdout is the MCP protocol stream on this transport.
+  console.error("[understory] git autocommit: enabled (bundle history is being recorded)");
 }
 
 const server = await buildMcpServer(kb);

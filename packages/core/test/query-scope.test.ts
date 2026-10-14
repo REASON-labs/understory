@@ -47,9 +47,9 @@ beforeEach(async () => {
 
   // The hot set is populated by the agent's write TOOLS, not by
   // kb.writeConcept — seeding it directly is what a real agent run would do.
-  recordHotWrite("/services/billing.md");
-  recordHotWrite("/services/oncall.md");
-  recordHotWrite("/people/ana.md");
+  recordHotWrite(kb, "/services/billing.md");
+  recordHotWrite(kb, "/services/oncall.md");
+  recordHotWrite(kb, "/people/ana.md");
 });
 
 afterEach(async () => {
@@ -235,7 +235,7 @@ describe("hot memory scope handling", () => {
   it("skips cached Q&A pairs for scoped queries", async () => {
     // A cached answer carries no record of which concepts produced it, so it
     // can't be shown to respect the scope.
-    recordHotQuery("previous question", "previous answer");
+    recordHotQuery(kb, "previous question", "previous answer");
 
     const scopedPrompts: string[] = [];
     await hotLookup(kb, "q", { scope: { type: "policy" } }, async (_s, p) => {
