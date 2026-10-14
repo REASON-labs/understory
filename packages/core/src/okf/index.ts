@@ -5,7 +5,7 @@ export { regenerateIndex, regenerateIndexChain, pruneEmptyDirs } from "./indexer
 export { appendLog, readLog } from "./logger.js";
 export { searchBundle, listTypes, matchesFilters, inDirectory, type SearchOptions } from "./search.js";
 export { validateBundle } from "./validate.js";
-export { normalizeSources, mergeSources, MAX_SOURCES, type ConceptSource } from "./sources.js";
+export { normalizeSources, mergeSources, MAX_SOURCES, MAX_RUN_CITATIONS, type ConceptSource } from "./sources.js";
 export { normalizeHistory, appendHistory, MAX_HISTORY, type Supersession } from "./history.js";
 export { addTombstones, forgottenRefs, forgottenInText, hashRef } from "./tombstone.js";
 export { lintBundle } from "./lint.js";

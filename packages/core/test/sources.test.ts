@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { KnowledgeBase, mergeSources, normalizeSources, MAX_SOURCES } from "../src/okf/index.js";
+import { KnowledgeBase, mergeSources, normalizeSources, MAX_SOURCES, MAX_RUN_CITATIONS } from "../src/okf/index.js";
 import { buildWriteTools } from "../src/agent/tools.js";
 import { TraceRecorder } from "../src/agent/trace.js";
 
@@ -135,5 +135,31 @@ describe("lint reports unsourced concepts", () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("eviction keeps real origins", () => {
+  it("does not lose the original external source however often a concept is edited", () => {
+    let s = mergeSources([], [{ ref: "https://example.com/original-doc", quote: "the fact" }, { ref: "trace:run0" }]);
+    for (let i = 1; i <= 200; i++) s = mergeSources(s, [{ ref: `trace:run${i}` }]);
+    expect(s.some((x) => x.ref === "https://example.com/original-doc")).toBe(true);
+    expect(s.find((x) => x.ref === "https://example.com/original-doc")?.quote).toBe("the fact");
+  });
+
+  it("keeps only the newest run citations", () => {
+    let s = mergeSources([], [{ ref: "https://example.com/a" }]);
+    for (let i = 1; i <= 25; i++) s = mergeSources(s, [{ ref: `trace:run${i}` }]);
+    const runs = s.filter((x) => x.ref.startsWith("trace:")).map((x) => x.ref);
+    expect(runs).toHaveLength(MAX_RUN_CITATIONS);
+    expect(runs.at(-1)).toBe("trace:run25");
+    expect(runs[0]).toBe("trace:run16");
+  });
+
+  it("evicts the oldest origins only as a last resort", () => {
+    const incoming = Array.from({ length: MAX_SOURCES + 3 }, (_, i) => ({ ref: `https://example.com/${i}` }));
+    const out = mergeSources([{ ref: "trace:t1" }], incoming);
+    expect(out).toHaveLength(MAX_SOURCES);
+    expect(out.some((x) => x.ref === "trace:t1")).toBe(false); // run citation went first
+    expect(out[0].ref).toBe("https://example.com/3"); // then the 3 oldest origins (54 entries - 50 cap = 4 evictions)
   });
 });

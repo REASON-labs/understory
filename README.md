@@ -448,7 +448,7 @@ sources:
     at: 2026-10-07
 ```
 
-Runs are cited automatically; the agent adds URLs, documents or people only when the instruction names them. Sources are append-only through the tools (overwrites and patches keep earlier entries; the list is capped at the newest 50). `sources` is an optional producer-defined key, so existing bundles stay valid, and `lint` lists concepts without it under `unsourced` without marking the bundle unhealthy.
+Runs are cited automatically; the agent adds URLs, documents or people only when the instruction names them. Sources are append-only through the tools (overwrites and patches keep earlier entries; the list is capped at 50, and run citations are limited to the newest 10 so frequent edits never push out the real origins `memory_forget` relies on). `sources` is an optional producer-defined key, so existing bundles stay valid, and `lint` lists concepts without it under `unsourced` without marking the bundle unhealthy.
 
 When a write changes a fact, the agent records the old value in `history` instead of leaving it in the body (a concept never asserts two contradictory facts):
 
