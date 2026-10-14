@@ -58,7 +58,13 @@ export interface DreamStatus {
  * Deliberately not persisted: it describes this process's behaviour, and a
  * stale history read from disk after a restart would be misleading.
  */
-const history: DreamRunRecord[] = [];
+/**
+ * A run record plus which memory it belongs to. `root` is the bundle path and
+ * never leaves this module: with profiles one process dreams for several
+ * memories, and a caller must only ever see the runs of its own.
+ */
+type StoredRun = DreamRunRecord & { root?: string };
+const history: StoredRun[] = [];
 let state = {
   enabled: false,
   interval: null as string | null,
@@ -68,7 +74,14 @@ let state = {
   nextRunAt: null as number | null,
 };
 
-export function getDreamStatus(): DreamStatus {
+/**
+ * @param root the bundle the caller may see. Without it every memory's runs are
+ *   returned (operator/test view); the HTTP API always passes the caller's own.
+ */
+export function getDreamStatus(root?: string): DreamStatus {
+  const visible = (root === undefined ? history : history.filter((r) => r.root === root)).map(
+    ({ root: _root, ...run }): DreamRunRecord => run
+  );
   let signals: string[] = [];
   let signalError: string | undefined;
   try {
@@ -86,8 +99,8 @@ export function getDreamStatus(): DreamStatus {
     mode: safeMode(),
     running: state.running,
     nextRunAt: state.nextRunAt ? new Date(state.nextRunAt).toISOString() : null,
-    lastRun: history[0] ?? null,
-    history: [...history],
+    lastRun: visible[0] ?? null,
+    history: visible,
   };
 }
 
@@ -104,9 +117,13 @@ export function resetDreamState(): void {
   };
 }
 
-function record(entry: DreamRunRecord): void {
+function record(entry: StoredRun): void {
   history.unshift(entry);
-  while (history.length > MAX_HISTORY) history.pop();
+  // Capped per memory, so one busy profile cannot push out another's history.
+  let n = 0;
+  for (let i = 0; i < history.length; i++) {
+    if (history[i].root === entry.root && ++n > MAX_HISTORY) history.splice(i--, 1);
+  }
 }
 
 /** A memory the dreamer should consolidate; `label` names it in the logs. */
@@ -200,6 +217,7 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
             signals: report.signals?.map((s) => ({ kind: s.kind, count: s.count })) ?? [],
             suppressed: report.suppressed ?? [],
             ...(label ? { label } : {}),
+            root: kb.bundle.root,
             ...commitFields(report.commits),
             ...(report.review ? { reviewBranch: report.review.branch } : {}),
           });
@@ -231,6 +249,7 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
             suppressed: [],
             error: message,
             ...(label ? { label } : {}),
+            root: kb.bundle.root,
           });
           console.error(`[understory] dream failed${tag}: ${message}`);
         }

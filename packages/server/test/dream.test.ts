@@ -23,7 +23,7 @@ let bundleRoot: string;
 
 function start(): Promise<void> {
   const app = express();
-  app.use("/api", dreamRouter({ commitsWithPrefix } as unknown as KnowledgeBase));
+  app.use("/api", dreamRouter({ commitsWithPrefix, bundle: { root: bundleRoot } } as unknown as KnowledgeBase));
   return new Promise((resolve) => {
     server = app.listen(0, "127.0.0.1", () => {
       baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -87,7 +87,7 @@ describe("GET /api/dream/preview", () => {
 
 describe("GET /api/dream/status", () => {
   it("reports dreaming as disabled when DREAM_INTERVAL is unset", async () => {
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
     const body = await (await fetch(`${baseUrl}/api/dream/status`)).json();
     expect(body.enabled).toBe(false);
     expect(body.lastRun).toBeNull();
@@ -95,7 +95,7 @@ describe("GET /api/dream/status", () => {
 
   it("reports the schedule and the resolved signal set once enabled", async () => {
     process.env.DREAM_INTERVAL = "6h";
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
 
     const body = await (await fetch(`${baseUrl}/api/dream/status`)).json();
     expect(body.enabled).toBe(true);
@@ -124,7 +124,7 @@ describe("GET /api/dream/status", () => {
 
   it("reports the 5-minute clamp rather than hiding it", async () => {
     process.env.DREAM_INTERVAL = "30s";
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
 
     const body = await (await fetch(`${baseUrl}/api/dream/status`)).json();
     expect(body.clamped).toBe(true);
@@ -139,7 +139,7 @@ describe("startDreamer config validation", () => {
     process.env.DREAM_INTERVAL = "6h";
     process.env.DREAM_SIGNALS = "orphans,typo";
 
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
 
     expect(getDreamStatus().enabled).toBe(false);
     expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/typo/));
@@ -149,7 +149,7 @@ describe("startDreamer config validation", () => {
     process.env.DREAM_INTERVAL = "6h";
     process.env.DREAM_MODE = "reveiw";
 
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
 
     expect(getDreamStatus().enabled).toBe(false);
     expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/Unknown DREAM_MODE "reveiw"/));
@@ -159,7 +159,7 @@ describe("startDreamer config validation", () => {
     process.env.DREAM_INTERVAL = "6h";
     process.env.DREAM_MODE = "review";
 
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
 
     expect(getDreamStatus().mode).toBe("review");
     expect(console.log).toHaveBeenCalledWith(expect.stringMatching(/REVIEW mode/));
@@ -169,7 +169,7 @@ describe("startDreamer config validation", () => {
     process.env.DREAM_INTERVAL = "6h";
     process.env.DREAM_MAX_CHANGES = "lots";
 
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
 
     expect(getDreamStatus().enabled).toBe(true);
     expect(getDreamStatus().maxChanges).toBe(15);
@@ -181,14 +181,14 @@ describe("startDreamer config validation", () => {
     process.env.DREAM_SIGNALS = "insights";
     process.env.DREAM_INSIGHTS = "false";
 
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
 
     expect(getDreamStatus().enabled).toBe(false);
   });
 
   it("stays disabled on an unparseable interval", () => {
     process.env.DREAM_INTERVAL = "banana";
-    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+    startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
     expect(getDreamStatus().enabled).toBe(false);
   });
 });
@@ -207,7 +207,7 @@ describe("dream run history", () => {
         suppressed: [],
       });
 
-      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
       const status = getDreamStatus();
@@ -237,7 +237,7 @@ describe("dream run history", () => {
         suppressed: [],
       });
 
-      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
       expect(getDreamStatus().lastRun).toMatchObject({
@@ -263,7 +263,7 @@ describe("dream run history", () => {
         suppressed: [],
       });
 
-      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
       expect(getDreamStatus().lastRun).toMatchObject({ reviewBranch: "dream/20261014-120000" });
@@ -287,7 +287,7 @@ describe("dream run history", () => {
         suppressed: [],
       });
 
-      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
       expect(getDreamStatus().lastRun).toMatchObject({ outcome: "too_broad" });
@@ -304,13 +304,92 @@ describe("dream run history", () => {
       process.env.DREAM_INTERVAL = "5m";
       runDream.mockRejectedValue(new Error("provider unreachable"));
 
-      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      startDreamer(async () => [{ kb: { bundle: { root: bundleRoot } } as unknown as KnowledgeBase, label: null }]);
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
       expect(getDreamStatus().lastRun).toMatchObject({
         ran: false,
         error: "provider unreachable",
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("dream status with several memories (profiles)", () => {
+  /** A router for one memory, the way app.ts builds one per profile. */
+  async function statusFor(root: string): Promise<{ history: { summary?: string; label?: string }[]; lastRun: { summary?: string } | null }> {
+    const app = express();
+    app.use("/api", dreamRouter({ commitsWithPrefix, bundle: { root } } as unknown as KnowledgeBase));
+    const srv: Server = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    try {
+      const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/api/dream/status`;
+      return await (await fetch(url)).json();
+    } finally {
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+    }
+  }
+
+  it("shows each memory only its own runs, and never the internal root", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.DREAM_INTERVAL = "5m";
+      runDream.mockImplementation(async (kb: { bundle: { root: string } }) => ({
+        ran: true,
+        outcome: "success",
+        summary: `consolidated ${kb.bundle.root.endsWith("work") ? "SECRET-WORK-PROJECT" : "home notes"}`,
+        filesChanged: [kb.bundle.root.endsWith("work") ? "/projects/secret-work-project.md" : "/home.md"],
+        signals: [],
+        suppressed: [],
+      }));
+      const work = { bundle: { root: "/profiles/work" } } as unknown as KnowledgeBase;
+      const home = { bundle: { root: "/profiles/home" } } as unknown as KnowledgeBase;
+      startDreamer(async () => [
+        { kb: work, label: "work" },
+        { kb: home, label: "home" },
+      ]);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+      vi.useRealTimers();
+
+      const homeView = await statusFor("/profiles/home");
+      const workView = await statusFor("/profiles/work");
+
+      expect(homeView.history).toHaveLength(1);
+      expect(homeView.lastRun?.summary).toContain("home notes");
+      expect(JSON.stringify(homeView)).not.toContain("SECRET-WORK-PROJECT");
+      expect(JSON.stringify(homeView)).not.toContain("work");
+      expect(workView.history).toHaveLength(1);
+      expect(JSON.stringify(workView)).not.toContain("home notes");
+      expect(JSON.stringify(workView)).not.toContain("/profiles/"); // the root never leaves the server
+
+      // A memory with no runs sees none.
+      expect((await statusFor("/profiles/other")).history).toEqual([]);
+      // The operator view (no root) still sees everything.
+      expect(getDreamStatus().history).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps history per memory, so a busy profile cannot push out another's", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.DREAM_INTERVAL = "5m";
+      runDream.mockResolvedValue({ ran: true, outcome: "success", summary: "x", filesChanged: [], signals: [], suppressed: [] });
+      const quiet = { bundle: { root: "/profiles/quiet" } } as unknown as KnowledgeBase;
+      const busy = { bundle: { root: "/profiles/busy" } } as unknown as KnowledgeBase;
+      let targets = [{ kb: quiet, label: "quiet" }, { kb: busy, label: "busy" }];
+      startDreamer(async () => targets);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 10); // both dream once
+      targets = [{ kb: busy, label: "busy" }]; // from now on only "busy" runs
+      for (let i = 0; i < 25; i++) await vi.advanceTimersByTimeAsync(5 * 60_000);
+      vi.useRealTimers();
+
+      expect((await statusFor("/profiles/quiet")).history).toHaveLength(1);
+      expect((await statusFor("/profiles/busy")).history).toHaveLength(20);
     } finally {
       vi.useRealTimers();
     }

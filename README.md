@@ -238,6 +238,25 @@ Things worth knowing:
 - The query cache, hot memory, traces, git history and dreaming are all per profile. Dreams run one profile after another.
 - The stdio transport serves one bundle. Point its `BUNDLE_ROOT` at a profile's directory to use that memory locally.
 
+#### Keeping something private: give it its own profile
+
+There is no per-concept privacy class (a `private` flag on a concept inside a shared bundle). That was considered and deliberately not built: every way of reading a concept (search, the graph, browse, the seed overview, chat, caches, hot memory, `memory_explain`, `memory_forget`) would have to filter, and a single missed path leaks. A profile has nothing to filter. Private material lives in its own bundle, git history, traces, caches and dream history, behind its own key, and no request made with another key can reach it.
+
+To keep something private:
+
+1. Create a profile for it (`profiles-cli.js create private`) and give that key only to the agents and people who should see it.
+2. Put the sensitive concepts in that profile's bundle, using `memory_add` with its key, or by copying files into `PROFILES_ROOT/private/` before running `create private`, which adopts the directory.
+3. Remove them from the old bundle. If they had a source, `memory_forget` does that cleanly. Git history in the old bundle still holds earlier versions, as it does for any forgotten concept (see [Forgetting](#forgetting)).
+
+What a profile does **not** protect, so you can decide whether it is enough:
+
+- **Anyone holding a profile's key sees all of it.** There are no finer classes inside a profile; split it into two profiles instead.
+- **The LLM is shared.** Every profile uses the server's one `LLM_*` configuration, so text from every profile is sent to that model. If private memory must never reach a hosted model, run the whole server on a local model. There is no per-profile model.
+- **The host.** Whoever can read `PROFILES_ROOT` (or its backups) can read every profile's files.
+- **Nothing links across profiles.** A concept in one cannot reference or be cited by another, by design. To let a private concept inform a shared one, copy a sanitised version across yourself.
+
+Isolation is tested for the run history in `/api/dream/status`, which is process-wide inside the server: each profile's key sees only its own dream runs. The query cache and hot memory are keyed per bundle, and the traces, git history, reviews and tombstones live inside each profile's own directory.
+
 ### Serving under a sub-path
 
 The web UI uses relative URLs throughout, so it works behind a path-prefixing reverse proxy — no configuration needed. Any proxy that strips the prefix before forwarding works:

@@ -29,7 +29,8 @@ export function dreamRouter(kb: KnowledgeBase): Router {
     const commits = await kb.commitsWithPrefix(DREAM_COMMIT_PREFIX, 20);
     const pending = (await reviews()?.list()) ?? [];
     res.json({
-      ...getDreamStatus(),
+      // Only this memory's runs: with profiles the history is process-wide.
+      ...getDreamStatus(kb.bundle.root),
       commits,
       reviews: pending,
       undo:
