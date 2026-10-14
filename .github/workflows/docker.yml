@@ -1,17 +1,17 @@
 name: Build and publish container
 
+# Publishing only. Tests live in ci.yml, which runs on every push and PR; this
+# workflow used to repeat them on every push to main.
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  # A release must pass the same checks as ci.yml before an image is pushed.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -21,13 +21,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm test
 
   publish:
     needs: test
-    # Publish only on release tags (v*). Merges to main run the tests but upload nothing.
+    # Publish only on release tags (v*); a manual dispatch from a branch tests only.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

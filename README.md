@@ -6,7 +6,7 @@ The layer beneath your agents: a self-wiring, plain-markdown memory. Every fact 
 
 Bundles follow the [Open Knowledge Format (OKF) v0.1 spec](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — plain markdown files with YAML frontmatter, readable by humans, diffable in git, portable across tools.
 
-Fork: [REASON-labs/understory](https://github.com/REASON-labs/understory) (primary) · [thecodacus/understory](https://github.com/thecodacus/understory) (upstream)
+Fork: [REASON-labs/understory](https://github.com/REASON-labs/understory) (primary) · [thecodacus/understory](https://github.com/thecodacus/understory) (upstream). See [What this fork adds](#what-this-fork-adds).
 
 **Three ways in, one agent:**
 
@@ -35,42 +35,14 @@ The repo's [docker-compose.yml](docker-compose.yml) builds from source and mount
 
 ### Pre-built image
 
-No clone needed — the image is public. Save this as `docker-compose.yml`:
+This fork publishes `ghcr.io/reason-labs/understory` **only when a `v*` tag is
+pushed**, so `:latest` is the newest release, not `main`. To run `main`, build
+from source as above. For a Portainer repository stack, use
+[docker-compose.portainer.yml](docker-compose.portainer.yml), which points at
+that image and forwards the same settings as `docker-compose.yml`.
 
-```yaml
-services:
-  understory:
-    image: ghcr.io/thecodacus/understory:latest
-    ports:
-      - "3800:3800"
-    # Lets the container reach a llama.cpp server running on the host via
-    # http://host.docker.internal:8080/v1 (see "Local llama.cpp" below).
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      # Your memory lives here as plain markdown — a named volume, or point
-      # a bind mount (e.g. ./my-memory:/bundle) at any OKF bundle.
-      - understory-memory:/bundle
-    environment:
-      BUNDLE_ROOT: /bundle
-      LLM_API_BASE_URL: ${LLM_API_BASE_URL}
-      LLM_API_KEY: ${LLM_API_KEY}
-      LLM_API_FORMAT: openai
-      LLM_MODEL: ${LLM_MODEL:-}
-      # Optional fallback
-      LLM_FALLBACK_API_BASE_URL: ${LLM_FALLBACK_API_BASE_URL:-}
-      LLM_FALLBACK_API_KEY: ${LLM_FALLBACK_API_KEY:-}
-      LLM_FALLBACK_API_FORMAT: ${LLM_FALLBACK_API_FORMAT:-openai}
-      LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-}
-    restart: unless-stopped
-
-volumes:
-  understory-memory:
-```
-
-```bash
-docker compose up -d
-```
+(The upstream image, `ghcr.io/thecodacus/understory`, is upstream's code and
+lacks everything listed under [What this fork adds](#what-this-fork-adds).)
 
 ### Choosing a provider
 
@@ -118,7 +90,9 @@ LLM_FALLBACK_API_BASE_URL=https://api.deepseek.com/v1 LLM_FALLBACK_API_KEY=sk-..
 > (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`,
 > `LLAMACPP_BASE_URL`, `LLAMACPP_API_KEY`, `LOCAL_BASE_URL`, `LOCAL_API_KEY`)
 > are gone. Setting any of them is a startup error with a migration message
-> rather than a silent fallback to a hardcoded hosted endpoint.
+> rather than a silent fallback to a hardcoded hosted endpoint. (Under Docker,
+> `docker-compose.yml` no longer forwards them, so a leftover one in `.env` is
+> simply ignored.)
 
 Then:
 
@@ -129,7 +103,7 @@ Then:
   ```
 - Your agent now has `memory_query` / `memory_add` / `memory_update` / `memory_status` / `memory_maintain` / `memory_explain` / `memory_forget`, and gets a seed overview of the memory at every session start.
 
-Teach it something (`memory_add`: "We deploy on Fridays, never Mondays"), then open the graph and watch the concept wire itself in. Deploying with Portainer? Use [docker-compose.portainer.yml](docker-compose.portainer.yml) as a repository stack.
+Teach it something (`memory_add`: "We deploy on Fridays, never Mondays"), then open the graph and watch the concept wire itself in. Deploying with Portainer? See [Pre-built image](#pre-built-image).
 
 ## Stack
 
@@ -384,6 +358,21 @@ A dream that fails is logged to stderr, and its outcome is recorded — includin
 a materially different event from `partial`, which means rollback itself failed
 and a human needs to look.
 
+#### Turning it on under Docker
+
+`docker-compose.yml` deliberately does not forward `DREAM_INTERVAL` (dreaming
+spends tokens unattended). Enable it without editing that tracked file, which
+would conflict on the next `git pull`, by adding a
+`docker-compose.override.yml` beside it. Compose merges it automatically:
+
+```yaml
+services:
+  understory:
+    environment:
+      DREAM_INTERVAL: 6h
+      # DREAM_SIGNALS: orphans,links,oversized,insights
+```
+
 **Note:** a dream holds the exclusive bundle write lock for its whole run, so
 user mutations queue behind it. At a 6h interval on a personal bundle this is
 invisible; if you shorten the interval a lot, it stops being.
@@ -477,10 +466,66 @@ This design mirrors the pattern in Karpathy's [LLM Wiki](https://gist.github.com
 ## Tests
 
 ```bash
-pnpm test                                  # core: 18 tests (spec §5/§6/§7/§9, sandbox, search, concurrency)
+pnpm -r build && pnpm test                 # unit tests, core + server (CI runs the same)
+node scripts/rollout-test.mjs <bundle>     # end-to-end on a temp COPY of <bundle>, real model (LLM_* env)
 pnpm --filter @understory/server exec tsx scripts/mcp-smoke.mts   # MCP stdio round-trip (needs SMOKE_BUNDLE + an API key)
 ```
 
+Unit tests mock the model, so they cannot show whether a prompt works.
+`scripts/rollout-test.mjs` exercises each user-visible feature against a real
+model on a copy of your bundle; it never touches the original.
+
+## What this fork adds
+
+Compared with [upstream](https://github.com/thecodacus/understory):
+
+| Area | Change |
+|---|---|
+| Write safety | Transactional mutations with rollback ([Mutation safety](#mutation-safety)); `GIT_AUTOCOMMIT` on by default |
+| Provenance | Per-fact `sources`, capped `history` of superseded facts, `memory_explain`, `memory_forget` with tombstones ([Provenance](#provenance)) |
+| Security | CORS locked to same-origin unless `CORS_ORIGINS` is set; `AUTH_REQUIRED=true` refuses to start without `AUTH_TOKEN` |
+| Config | Single `LLM_API_*` provider config (legacy per-provider keys removed); `HOST` bind address; `BUNDLE_PATH` for the compose mount |
+| Dreaming | Per-signal control (`DREAM_SIGNALS`), `/api/dream/preview` and `/api/dream/status` |
+| Ops | `/health`, `scripts/rollout-test.mjs`, recall benchmark (`pnpm bench:recall`) |
+
+Upstream changes are merged in periodically (`git fetch upstream && git merge upstream/main`).
+
+## Updating a deployment
+
+The home deployment runs `docker-compose.yml` from a clone of this repo.
+
+```bash
+cd /path/to/understory
+git rev-parse --short HEAD                         # note the current commit: your way back
+tar czf ~/understory-bundle-$(date +%F).tgz -C "$BUNDLE_PATH" .   # back up the bundle
+git pull && docker compose up -d --build
+docker compose logs --tail 20                      # model, auth, step budget, dreaming
+```
+
+Rolling back code: `git checkout <previous commit> && docker compose up -d --build`.
+Rolling back content: the bundle is its own git repo (`GIT_AUTOCOMMIT`), so
+`git -C "$BUNDLE_PATH" log` / `revert` undoes individual runs.
+
+Keep local deployment tweaks in `.env` and `docker-compose.override.yml`, never in
+tracked files, so `git pull` never conflicts.
+
 ## Environment
 
-See [.env.example](.env.example). `BUNDLE_ROOT` is required. `GIT_AUTOCOMMIT` (default `true`) commits every mutation; `MUTATION_ROLLBACK` (default `true`) makes agent runs transactional.
+See [.env.example](.env.example) for every setting with its default. `BUNDLE_ROOT`
+is required (Docker sets it to `/bundle`; choose the host directory with
+`BUNDLE_PATH`). Unless the row says otherwise, both compose files forward each
+setting from `.env`; an empty value means "use the default".
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `LLM_API_BASE_URL` / `LLM_API_KEY` / `LLM_API_FORMAT` / `LLM_MODEL` | — / — / `openai` / auto | Primary model |
+| `LLM_FALLBACK_*` | off | Fallback model; `LLM_FALLBACK_ALLOW_FOR`, `LLM_FALLBACK_RETRY_429` |
+| `AUTH_TOKEN` / `AUTH_REQUIRED` | open / `false` | Bearer auth on `/mcp` and `/api`; refuse to start open |
+| `CORS_ORIGINS` | same-origin | Comma list, or `*` |
+| `PROFILES_ROOT` / `ADMIN_TOKEN` | off | [Profiles](#profiles-several-isolated-memories-on-one-server) (commented out in compose) |
+| `GIT_AUTOCOMMIT` / `MUTATION_ROLLBACK` | `true` / `true` | Commit every mutation; transactional runs |
+| `LLM_TIMEOUT` | none | Deadline for one model run, e.g. `30m` |
+| `AGENT_MAX_STEPS` | `12` | Steps per agent run |
+| `QUERY_CACHE` / `QUERY_CACHE_TTL` | `true` / `24h` | Repeated-query cache |
+| `HOT_MEMORY` / `HOT_MEMORY_TTL` | `true` / `1h` | Recent working set checked before a full run |
+| `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation); not forwarded by `docker-compose.yml` |
