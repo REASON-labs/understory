@@ -389,14 +389,41 @@ files), ideally while no dream or mutation is running:
 docker compose exec understory git -C /bundle revert --no-edit <first>^..<last>
 ```
 
-Not covered yet: a review mode where dreams land on a branch for a human to
-merge (see issue #20).
+#### Review mode
+
+`DREAM_MODE=review` runs dreams for real, with your model, but nothing live
+changes: the dream works in a throwaway `git worktree` of the bundle and its
+commits are left on a `dream/<timestamp>` branch for you to accept or reject.
+It is the way to see what dreaming would actually do to your memory before
+letting it apply on its own. Requires `GIT_AUTOCOMMIT=true`.
+
+```bash
+curl localhost:3800/api/dream/reviews                       # pending reviews: summary, concepts changed
+curl localhost:3800/api/dream/reviews/<id>/diff             # the changes, as a plain-text diff
+curl -X POST localhost:3800/api/dream/reviews/<id>/accept   # merge into the live memory
+curl -X POST localhost:3800/api/dream/reviews/<id>/reject   # discard
+```
+
+(Add `-H "Authorization: Bearer $AUTH_TOKEN"` when auth is on.)
+
+- One review at a time: while one is pending, the next dream is skipped, so
+  unreviewed changes never stack.
+- A dream that fails, is too broad, or changes nothing leaves no branch.
+- Accept merges under the write lock. Your own edits made while the review was
+  pending are fine: `log.md` keeps both sides' entries and every `index.md` is
+  regenerated, never merged line by line. If the dream and you changed the
+  **same concept**, accept is refused with `409` and the conflicting paths;
+  nothing is merged and the review stays, so reject it or resolve it by hand.
+- Accept returns a `revertCommand` (`git revert -m 1 ...`) that undoes it.
+- The dream's trace is kept in the live `.traces/` either way.
+- Pending reviews also show under `reviews` in `/api/dream/status`, and the
+  dream log line says `dream ready for review: dream/<id>`.
 
 #### Turning it on under Docker
 
 Set `DREAM_INTERVAL` (e.g. `6h`) in `.env` and recreate the container
 (`docker compose up -d`). Both compose files forward it, along with
-`DREAM_SIGNALS`, `DREAM_INSIGHTS` and `DREAM_MAX_CHANGES`; it is off unless set, since dreaming
+`DREAM_SIGNALS`, `DREAM_INSIGHTS`, `DREAM_MAX_CHANGES` and `DREAM_MODE`; it is off unless set, since dreaming
 spends tokens with nobody watching. The startup log confirms it:
 `dreaming: every 6h — signals: ...`.
 
@@ -512,7 +539,7 @@ Compared with [upstream](https://github.com/thecodacus/understory):
 | Provenance | Per-fact `sources`, capped `history` of superseded facts, `memory_explain`, `memory_forget` with tombstones ([Provenance](#provenance)) |
 | Security | CORS locked to same-origin unless `CORS_ORIGINS` is set; `AUTH_REQUIRED=true` refuses to start without `AUTH_TOKEN` |
 | Config | Single `LLM_API_*` provider config (legacy per-provider keys removed); `HOST` bind address; `BUNDLE_PATH` for the compose mount |
-| Dreaming | Per-signal control (`DREAM_SIGNALS`), change budget with full rollback (`DREAM_MAX_CHANGES`), `dream:`-prefixed commits with a one-command revert, `/api/dream/preview` and `/api/dream/status` |
+| Dreaming | Per-signal control (`DREAM_SIGNALS`), change budget with full rollback (`DREAM_MAX_CHANGES`), `dream:`-prefixed commits with a one-command revert, review mode (`DREAM_MODE=review`), `/api/dream/preview` and `/api/dream/status` |
 | Ops | `/health`, `scripts/rollout-test.mjs`, recall benchmark (`pnpm bench:recall`) |
 
 Upstream changes are merged in periodically (`git fetch upstream && git merge upstream/main`).
@@ -557,3 +584,4 @@ setting from `.env`; an empty value means "use the default".
 | `HOT_MEMORY` / `HOT_MEMORY_TTL` | `true` / `1h` | Recent working set checked before a full run |
 | `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation) |
 | `DREAM_MAX_CHANGES` | `15` | Concepts one dream may change before it is rolled back |
+| `DREAM_MODE` | `apply` | `review` leaves each dream on a `dream/*` branch to accept or reject ([Review mode](#review-mode)) |

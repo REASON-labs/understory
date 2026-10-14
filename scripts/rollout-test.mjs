@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Rollout test for provenance / memory_explain / supersession history /
- * memory_forget / dream guardrails (#20). One command, mechanical checks, no
- * judgment needed.
+ * memory_forget / dream guardrails (#20) / dream review mode (#34). One command,
+ * mechanical checks, no judgment needed.
  *
  *   node scripts/rollout-test.mjs <path-to-a-bundle>
  *
@@ -259,7 +259,7 @@ await client.close();
 
 // ── S10-S11: dream guardrails (#20). Dreams are not an MCP tool, so these
 // drive the built core directly, on the same copy, after the server is closed.
-const { KnowledgeBase, runDream } = await imp("@understory/core");
+const { KnowledgeBase, runDream, DreamReviews } = await imp("@understory/core");
 const { execFileSync } = await import("node:child_process");
 const git = (...args) => execFileSync("git", ["-C", dest, ...args], { encoding: "utf8" });
 /** Working tree contents, minus run traces (written outside any transaction). */
@@ -314,6 +314,87 @@ say("\nSTEP 11: dream commits are prefixed and one command reverts the run");
     record("11c", "the revert command restores the tree exactly", diff.length === 0 ? "PASS" : "FAIL", diff.join(", "));
   } else {
     record("11c", "revert of a successful dream", "WARN", `model produced outcome ${r.outcome} with ${r.commits?.length ?? 0} commit(s)`);
+  }
+}
+
+// ── S12-S14: review mode (#34). Step 11 reverted its dream, so the seeded
+// orphans and broken link are back and there is dream work to do.
+const reviews = new DreamReviews(dkb);
+const conflictMarkers = (rel) => /^(<<<<<<<|>>>>>>>)/m.test(fs.readFileSync(path.join(dest, rel), "utf8"));
+
+say("\nSTEP 12: a review-mode dream changes nothing live and leaves a branch");
+let reviewId = null;
+{
+  const head = git("rev-parse", "HEAD").trim();
+  const before = snapshot();
+  const r = await runDream(dkb, { mode: "review" });
+  say(`  outcome: ${r.outcome} — ${(r.summary ?? r.reason ?? "").slice(0, 300)}`);
+  if (r.review) {
+    reviewId = r.review.branch.slice("dream/".length);
+    const diff = sameTree(before, snapshot());
+    record("12a", "live tree unchanged", diff.length === 0 ? "PASS" : "FAIL", diff.join(", "));
+    // A "snapshot before a review dream" commit of pending live changes is
+    // expected; what must not appear on the live branch is a dream commit.
+    const landed = git("log", "--format=%s", `${head}..HEAD`).split("\n").filter((m) => m.startsWith("dream:"));
+    record("12b", "no dream commit on the live branch", landed.length === 0 ? "PASS" : "FAIL", landed.join(" | "));
+    const listed = await reviews.list();
+    record("12c", "the review is listed", listed.some((x) => x.id === reviewId) ? "PASS" : "FAIL");
+    const patch = (await reviews.diff(reviewId)) ?? "";
+    say(`  diff (first 1500 chars):\n${patch.slice(0, 1500)}`);
+    record("12d", "the review has a non-empty diff", patch.trim() ? "PASS" : "FAIL");
+  } else {
+    record("12", "review branch created", "WARN", `model produced outcome ${r.outcome} with no changes to review`);
+  }
+}
+
+say("\nSTEP 13: accepting the review merges it into the live bundle");
+if (reviewId) {
+  const files = (await reviews.get(reviewId)).filesChanged;
+  const branchContent = Object.fromEntries(
+    files.map((f) => [f, (() => { try { return git("show", `dream/${reviewId}:${f.slice(1)}`); } catch { return null; } })()])
+  );
+  // A user edit lands while the review is pending, so accept has to merge.
+  seed("dreamtest/user-note.md", "type: Note\ntitle: User note", "# User note\n\nWritten while a review was pending.\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "rollout: user edit during review");
+  const a = await reviews.accept(reviewId);
+  say(`  accept: ${JSON.stringify(a).slice(0, 400)}`);
+  if (a.ok) {
+    const mismatched = files.filter((f) => {
+      const p = path.join(dest, f.slice(1));
+      const live = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null;
+      return live !== branchContent[f];
+    });
+    record("13a", "every reviewed concept landed as reviewed", mismatched.length === 0 ? "PASS" : "FAIL", mismatched.join(", "));
+    record("13b", "the user edit survived", fs.existsSync(path.join(dest, "dreamtest/user-note.md")) ? "PASS" : "FAIL");
+    record("13c", "no conflict markers in log.md / index.md", !conflictMarkers("log.md") && !conflictMarkers("index.md") ? "PASS" : "FAIL");
+    record("13d", "the review is gone", (await reviews.get(reviewId)) === null ? "PASS" : "FAIL");
+  } else if (a.reason === "conflict") {
+    record("13", "accept", "WARN", `the dream edited the same concept as the seeded user edit: ${a.conflicts.join(", ")}`);
+  } else {
+    record("13", "accept", "FAIL", JSON.stringify(a));
+  }
+} else {
+  record("13", "accept", "SKIP", "no review from step 12");
+}
+
+say("\nSTEP 14: rejecting a review discards it");
+{
+  // Reintroduce dream work: a fresh orphan.
+  seed("dreamtest/plover.md", "type: Note\ntitle: Plover alerts\ndescription: Plover pages on-call when Heron backs up", "# Plover\n\nPlover alerts when the Heron queue is deep.\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "rollout: seed another orphan");
+  const before = snapshot();
+  const r = await runDream(dkb, { mode: "review" });
+  say(`  outcome: ${r.outcome} — ${(r.summary ?? r.reason ?? "").slice(0, 300)}`);
+  if (r.review) {
+    const id = r.review.branch.slice("dream/".length);
+    record("14a", "reject succeeds", (await reviews.reject(id)) ? "PASS" : "FAIL");
+    record("14b", "no review remains", (await reviews.list()).length === 0 ? "PASS" : "FAIL");
+    const diff = sameTree(before, snapshot());
+    record("14c", "live tree unchanged", diff.length === 0 ? "PASS" : "FAIL", diff.join(", "));
+  } else {
+    record("14", "reject", "WARN", `model produced outcome ${r.outcome} with no changes to review`);
   }
 }
 

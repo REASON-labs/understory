@@ -1,6 +1,7 @@
 import {
   parseDuration,
   resolveDreamMaxChanges,
+  resolveDreamMode,
   resolveDreamSignals,
   runDream,
   type DreamReport,
@@ -25,6 +26,8 @@ export interface DreamRunRecord {
   commits?: string[];
   /** Undoes exactly this run; run it in the bundle directory. */
   revertCommand?: string;
+  /** DREAM_MODE=review: the branch awaiting accept or reject. */
+  reviewBranch?: string;
   /** Which memory ran, when several are hosted (profiles). */
   label?: string;
 }
@@ -38,6 +41,8 @@ export interface DreamStatus {
   signals: string[];
   /** DREAM_MAX_CHANGES: concepts one dream may change before it is rolled back. */
   maxChanges: number;
+  /** DREAM_MODE: "apply" commits live; "review" leaves a dream/* branch to accept. */
+  mode: string;
   running: boolean;
   nextRunAt: string | null;
   lastRun: DreamRunRecord | null;
@@ -78,6 +83,7 @@ export function getDreamStatus(): DreamStatus {
     clamped: state.clamped,
     signals: signalError ? [`(invalid: ${signalError})`] : signals,
     maxChanges: resolveDreamMaxChanges().limit,
+    mode: safeMode(),
     running: state.running,
     nextRunAt: state.nextRunAt ? new Date(state.nextRunAt).toISOString() : null,
     lastRun: history[0] ?? null,
@@ -139,13 +145,21 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
     return;
   }
 
+  let mode: string;
+  try {
+    mode = resolveDreamMode();
+  } catch (err) {
+    console.error(`[understory] dreaming disabled: ${(err as Error).message}`);
+    return;
+  }
   const maxChanges = resolveDreamMaxChanges();
   if (maxChanges.warning) console.error(`[understory] ${maxChanges.warning}`);
 
   const every = Math.max(interval, MIN_INTERVAL_MS);
   const clamped = every !== interval;
   console.log(
-    `[understory] dreaming: every ${raw}${clamped ? " (clamped to 5m minimum)" : ""} — signals: ${signals.join(", ")}; at most ${maxChanges.limit} concepts changed per run`
+    `[understory] dreaming: every ${raw}${clamped ? " (clamped to 5m minimum)" : ""} — signals: ${signals.join(", ")}; at most ${maxChanges.limit} concepts changed per run` +
+      (mode === "review" ? "; REVIEW mode: changes wait on a dream/* branch for accept or reject" : "")
   );
   if (!signals.includes("duplicates")) {
     console.log(
@@ -187,9 +201,14 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
             suppressed: report.suppressed ?? [],
             ...(label ? { label } : {}),
             ...commitFields(report.commits),
+            ...(report.review ? { reviewBranch: report.review.branch } : {}),
           });
           if (!report.ran) {
             console.log(`[understory] dream skipped${tag}: ${report.reason}`);
+          } else if (report.review) {
+            console.log(
+              `[understory] dream ready for review${tag}: ${report.review.branch}, ${report.filesChanged?.length ?? 0} concept(s) — see /api/dream/reviews`
+            );
           } else if (report.outcome === "success") {
             console.log(
               `[understory] dream complete${tag}: ${report.filesChanged?.length ?? 0} file(s) changed — ${truncate(report.summary ?? "", 200)}`
@@ -236,6 +255,14 @@ export function startDreamer(targets: () => Promise<DreamTarget[]>): void {
     }
   }, every);
   timer.unref(); // never keep the process alive just to dream
+}
+
+function safeMode(): string {
+  try {
+    return resolveDreamMode();
+  } catch (err) {
+    return `(invalid: ${(err as Error).message})`;
+  }
 }
 
 function commitFields(commits: string[] | undefined): Pick<DreamRunRecord, "commits" | "revertCommand"> {

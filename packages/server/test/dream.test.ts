@@ -38,6 +38,7 @@ beforeEach(async () => {
   commitsWithPrefix.mockReset().mockResolvedValue([]);
   resetDreamState();
   delete process.env.DREAM_MAX_CHANGES;
+  delete process.env.DREAM_MODE;
   delete process.env.DREAM_INTERVAL;
   delete process.env.DREAM_SIGNALS;
   delete process.env.DREAM_INSIGHTS;
@@ -144,6 +145,26 @@ describe("startDreamer config validation", () => {
     expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/typo/));
   });
 
+  it("refuses to start on an invalid DREAM_MODE", () => {
+    process.env.DREAM_INTERVAL = "6h";
+    process.env.DREAM_MODE = "reveiw";
+
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+
+    expect(getDreamStatus().enabled).toBe(false);
+    expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/Unknown DREAM_MODE "reveiw"/));
+  });
+
+  it("announces review mode at startup and reports it in status", () => {
+    process.env.DREAM_INTERVAL = "6h";
+    process.env.DREAM_MODE = "review";
+
+    startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+
+    expect(getDreamStatus().mode).toBe("review");
+    expect(console.log).toHaveBeenCalledWith(expect.stringMatching(/REVIEW mode/));
+  });
+
   it("warns on an invalid DREAM_MAX_CHANGES and keeps the default, never unlimited", () => {
     process.env.DREAM_INTERVAL = "6h";
     process.env.DREAM_MAX_CHANGES = "lots";
@@ -223,6 +244,31 @@ describe("dream run history", () => {
         commits: ["1111111", "2222222", "3333333"],
         revertCommand: "git revert --no-edit 1111111^..3333333",
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records the review branch of a review-mode run, and offers no revert", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.DREAM_INTERVAL = "5m";
+      runDream.mockResolvedValue({
+        ran: true,
+        outcome: "success",
+        summary: "added a hub",
+        filesChanged: ["/hub.md"],
+        review: { branch: "dream/20261014-120000" },
+        signals: [],
+        suppressed: [],
+      });
+
+      startDreamer(async () => [{ kb: {} as KnowledgeBase, label: null }]);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+
+      expect(getDreamStatus().lastRun).toMatchObject({ reviewBranch: "dream/20261014-120000" });
+      expect(getDreamStatus().lastRun!.revertCommand).toBeUndefined();
+      expect(console.log).toHaveBeenCalledWith(expect.stringMatching(/dream ready for review: dream\/20261014-120000/));
     } finally {
       vi.useRealTimers();
     }
