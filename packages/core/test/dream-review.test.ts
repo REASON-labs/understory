@@ -266,6 +266,41 @@ describe("review mode: accept and reject", () => {
     expect((await new DreamReviews(kb).list()).map((r) => r.id)).toEqual([id]);
   }, 30_000);
 
+  it("never concludes a merge left in progress (conflict markers stay out of history)", async () => {
+    modelWrites(["/hub.md", "# Hub\n\ndream version\n"]);
+    const { review } = await reviewDream();
+    const branch = review!.branch;
+    await kb.writeConcept("/hub.md", fm("Hub"), "# Hub\n\nuser version\n", "User wrote hub.");
+    // Simulate a crash mid-accept: a conflicted merge left in the working tree.
+    try {
+      git("merge", "--no-ff", "--no-commit", branch);
+    } catch {
+      // conflict expected
+    }
+    expect(await read("hub.md")).toMatch(/<<<<<<</);
+
+    const result = await new DreamReviews(kb).accept(branch.slice("dream/".length));
+
+    expect(result).toMatchObject({ ok: false, reason: "conflict", conflicts: ["/hub.md"] });
+    expect(await read("hub.md")).toContain("user version");
+    expect(await read("hub.md")).not.toMatch(/<<<<<<<|>>>>>>>/);
+    expect(git("log", "-p", "-3")).not.toMatch(/^\+<<<<<<</m);
+    expect(await exists(".git/MERGE_HEAD")).toBe(false);
+  }, 30_000);
+
+  it("merges when file timestamps changed under git (stale index stat info)", async () => {
+    modelWrites(["/hub.md", "# Hub\n"]);
+    const { review } = await reviewDream();
+    // Same content, new mtimes: what a bind mount or a host-side checkout can produce.
+    const later = new Date(Date.now() + 60_000);
+    for (const f of ["index.md", "log.md", "stray.md"]) await fs.utimes(path.join(root, f), later, later);
+
+    const result = await new DreamReviews(kb).accept(review!.branch.slice("dream/".length));
+
+    expect(result.ok).toBe(true);
+    expect(await exists("hub.md")).toBe(true);
+  }, 30_000);
+
   it("reject discards the review and lets the next dream run", async () => {
     modelWrites(["/hub.md", "# Hub\n"]);
     const { review } = await reviewDream();
