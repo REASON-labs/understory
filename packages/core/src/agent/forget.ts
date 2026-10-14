@@ -38,7 +38,20 @@ export interface ForgetResult {
   warnings: string[];
 }
 
-type Runner = (kb: KnowledgeBase, instruction: string) => Promise<MutationOutcome>;
+type Runner = (
+  kb: KnowledgeBase,
+  instruction: string,
+  options?: { maxSteps?: number }
+) => Promise<MutationOutcome>;
+
+/**
+ * Step cap for the rewrite. The default (12) is sized for one concept; a
+ * redaction reads and rewrites several, and a run that hits the cap keeps its
+ * partial writes, which is the one outcome forget must not leave unexplained.
+ */
+function redactionStepCap(concepts: number): number {
+  return Math.min(60, Math.max(24, concepts * 8));
+}
 
 export async function planForget(kb: KnowledgeBase, target: ForgetTarget): Promise<ForgetPlan> {
   if (!!target.source === !!target.path) {
@@ -138,7 +151,7 @@ export async function runForget(
   const warnings: string[] = [];
   if (options.dryRun !== false) return { status: "dry_run", plan, warnings };
 
-  const runner: Runner = options.runner ?? ((k, instruction) => runMutation(k, instruction));
+  const runner: Runner = options.runner ?? ((k, instruction, o) => runMutation(k, instruction, o));
   const refSet = new Set(plan.refs);
   const traceStore = new TraceStore(kb.bundle.root);
 
@@ -164,13 +177,29 @@ export async function runForget(
       `\n\nConcepts to rewrite:\n${lines.join("\n")}\n\n` +
       `Rules: keep everything unrelated. Do NOT restate removed content anywhere (not in log_summary, not in "replaced", ` +
       `not in sources). Set every log_summary to exactly: ${JSON.stringify(NEUTRAL)}. Do not create or delete concepts.`;
-    const outcome = await runner(kb, instruction);
+    const outcome = await runner(kb, instruction, { maxSteps: redactionStepCap(plan.redact.length) });
     // The run's trace stores the instruction (with excerpts): never keep it.
     if (outcome.ok) {
       await traceStore.remove([outcome.result.traceId]);
       dropRefs.add(`trace:${outcome.result.traceId}`);
     } else if ("traceId" in outcome && outcome.traceId) await traceStore.remove([outcome.traceId]);
     if (!outcome.ok) {
+      // "partial" means files were changed and kept (the run hit its step
+      // limit, or a rollback could not restore everything). Saying "nothing
+      // was changed" there would be false, and the caller must know what to
+      // review. Re-running is safe: sources are only stripped after a clean
+      // rewrite, so the same plan is found again.
+      if (outcome.status === "partial") {
+        return {
+          status: "aborted",
+          plan,
+          error:
+            `Redaction did not finish and may have partly rewritten: ${outcome.filesChanged.join(", ") || "(unknown)"}. ` +
+            `Nothing was deleted and nothing was tombstoned. Review those files, then run forget again. ` +
+            `Cause: ${outcome.error}`,
+          warnings,
+        };
+      }
       return {
         status: "aborted",
         plan,

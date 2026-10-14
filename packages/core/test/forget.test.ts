@@ -220,3 +220,34 @@ describe("forgottenInText", () => {
     expect(await forgottenInText(root, "no refs at all")).toEqual([]);
   });
 });
+
+describe("runForget when the rewrite is cut short", () => {
+  it("does not claim nothing changed after a partial rewrite, and does not tombstone", async () => {
+    const partial = async (): Promise<MutationOutcome> => ({
+      ok: false,
+      status: "partial",
+      filesChanged: ["/shared.md"],
+      error: "The run used all 24 steps and was stopped before it finished",
+      traceId: "cut-short",
+    });
+    const result = await runForget(kb, { source: SECRET_URL }, { dryRun: false, runner: partial });
+    expect(result.status).toBe("aborted");
+    expect(result.error).toContain("partly rewritten");
+    expect(result.error).toContain("/shared.md");
+    expect(result.error).not.toContain("nothing was changed");
+    // Nothing was deleted and the source is not tombstoned, so a rerun finds the same plan.
+    expect(await exists("solo.md")).toBe(true);
+    expect(await forgottenRefs(root, [SECRET_URL])).toEqual([]);
+  });
+
+  it("gives the rewrite a higher step cap than the interactive default", async () => {
+    let seen: number | undefined;
+    const spy = async (_k: KnowledgeBase, _i: string, o?: { maxSteps?: number }): Promise<MutationOutcome> => {
+      seen = o?.maxSteps;
+      return { ok: false, status: "failed", error: "stop here" };
+    };
+    await runForget(kb, { source: SECRET_URL }, { dryRun: false, runner: spy });
+    expect(seen).toBeGreaterThanOrEqual(24);
+    expect(seen).toBeLessThanOrEqual(60);
+  });
+});

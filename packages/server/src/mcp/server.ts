@@ -144,6 +144,17 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
         ],
       };
     }
+    if (outcome.status === "rolled_back") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Mutation failed and was rolled back; no changes were kept (${outcome.filesReverted.length} file(s) restored).\nError: ${outcome.error}`,
+          },
+        ],
+        isError: true,
+      };
+    }
     return {
       content: [{ type: "text" as const, text: `Mutation failed: ${outcome.error}` }],
       isError: true,
