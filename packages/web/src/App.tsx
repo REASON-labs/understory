@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, setAuthToken, type AppConfig, type Concept, type ConformanceReport, type LogEntry, type ProfileInfo, type SearchHit, type TreeNode } from "./api";
+import { api, ApiError, setAuthToken, type AppConfig, type Concept, type ConformanceReport, type DreamStatus, type LogEntry, type ProfileInfo, type SearchHit, type TreeNode } from "./api";
 import { Tree } from "./components/Tree";
 import { ConceptView } from "./components/ConceptView";
 import { LogView } from "./components/LogView";
 import { ChatPanel } from "./components/ChatPanel";
 import { GraphView } from "./components/GraphView";
+import { ReviewsView } from "./components/ReviewsView";
 
 type View =
   | { kind: "concept"; path: string }
   | { kind: "log" }
   | { kind: "graph" }
+  | { kind: "reviews" }
   | { kind: "empty" };
 
 export default function App() {
@@ -28,6 +30,18 @@ export default function App() {
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<ProfileInfo["mode"] | null>(null);
   const [profile, setProfile] = useState<ProfileInfo | null>(null);
+  const [dream, setDream] = useState<DreamStatus | null>(null);
+
+  // Pending dream reviews drive the footer badge; a dream can finish at any
+  // time, so this is re-read every minute (a few git calls on the server).
+  const loadDream = useCallback(() => {
+    api.dreamStatus().then(setDream).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadDream();
+    const t = setInterval(loadDream, 60_000);
+    return () => clearInterval(t);
+  }, [loadDream]);
 
   const refresh = useCallback(() => {
     api
@@ -231,6 +245,21 @@ export default function App() {
             Graph
           </button>
           <button
+            onClick={() => {
+              loadDream();
+              setView({ kind: "reviews" });
+            }}
+            title={dream?.reviews.length ? `${dream.reviews.length} dream review(s) pending` : "Dream reviews"}
+            className={`flex flex-1 items-center justify-center gap-1 border-l border-zinc-800 px-3 py-2 hover:bg-zinc-800 ${view.kind === "reviews" ? "text-cyan-300" : "text-zinc-400"}`}
+          >
+            Reviews
+            {!!dream?.reviews.length && (
+              <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-bold leading-4 text-zinc-950">
+                {dream.reviews.length}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setChatOpen(!chatOpen)}
             className="flex-1 border-l border-zinc-800 px-3 py-2 text-zinc-400 hover:bg-zinc-800"
           >
@@ -251,6 +280,17 @@ export default function App() {
           <ConceptView concept={concept} onNavigate={openConcept} />
         )}
         {!error && view.kind === "log" && <LogView entries={log} onNavigate={openConcept} />}
+        {!error && view.kind === "reviews" && (
+          <ReviewsView
+            status={dream}
+            onChanged={() => {
+              loadDream();
+              onMutation();
+            }}
+            onMemoryChanged={onMutation}
+            onNavigate={openConcept}
+          />
+        )}
         {!error && view.kind === "graph" && (
           <GraphView refreshKey={graphRefreshKey} onNavigate={openConcept} />
         )}
