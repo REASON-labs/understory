@@ -5,6 +5,9 @@ import { simpleGit, type SimpleGit } from "simple-git";
 import { KnowledgeBase } from "../okf/knowledge-base.js";
 import { pruneEmptyDirs, regenerateIndex } from "../okf/indexer.js";
 import { appendLog } from "../okf/logger.js";
+import { parseDoc } from "../okf/frontmatter.js";
+import { normalizeSources } from "../okf/sources.js";
+import { forgottenInText, forgottenRefs } from "../okf/tombstone.js";
 import type { LogAction } from "../okf/types.js";
 
 /**
@@ -54,6 +57,12 @@ export type AcceptResult =
   | { ok: false; reason: "not_found" }
   /** Concepts changed on both sides; nothing was merged and the review is kept. */
   | { ok: false; reason: "conflict"; conflicts: string[] }
+  /**
+   * The dream started before something was forgotten, and merging it would bring
+   * that material back (a changed concept cites a forgotten source, or mentions
+   * a forgotten URL/path). Nothing was merged and the review is kept.
+   */
+  | { ok: false; reason: "forgotten"; files: string[]; message: string }
   | { ok: false; reason: "error"; message: string };
 
 const ID_PATTERN = /^\d{8}-\d{6}(-\d+)?$/;
@@ -181,6 +190,21 @@ export class DreamReviews {
         return { ok: false, reason: "conflict", conflicts: conflicts.map((f) => "/" + f) } as const;
       }
 
+      // The dream may predate a memory_forget. Its branch is a full copy of the
+      // bundle from when it started, so a merge can resurrect derived material.
+      const resurrected = await this.resurrected(filesChanged);
+      if (resurrected.length > 0) {
+        await this.abortMerge();
+        return {
+          ok: false,
+          reason: "forgotten",
+          files: resurrected,
+          message:
+            "Not merged: this dream was made before something was forgotten, and these concepts cite or mention it. " +
+            "Reject the review and let the next dream run again.",
+        } as const;
+      }
+
       try {
         await this.rebuildGenerated(liveLog, addedLogBullets(baseLog, dreamLog));
         await this.git.add(["-A"]);
@@ -201,6 +225,48 @@ export class DreamReviews {
         return { ok: false, reason: "error", message: (err as Error).message } as const;
       }
     });
+  }
+
+  /**
+   * Ids of pending reviews that would bring back forgotten material: they
+   * change one of `paths`, or change a concept that cites one of `refs`.
+   * memory_forget rejects these, because accepting one later would undo it.
+   */
+  async touching(paths: Set<string>, refs: Set<string>): Promise<string[]> {
+    const ids: string[] = [];
+    for (const review of await this.list()) {
+      let hit = review.filesChanged.some((f) => paths.has(f));
+      for (const f of hit ? [] : review.filesChanged) {
+        const raw = await this.show(review.branch, f.slice(1));
+        if (!raw) continue;
+        if (normalizeSources(parseDoc(raw).frontmatter.sources).some((x) => refs.has(x.ref))) {
+          hit = true;
+          break;
+        }
+      }
+      if (hit) ids.push(review.id);
+    }
+    return ids;
+  }
+
+  /** Changed concepts (in the merged working tree) that cite or mention a forgotten source. */
+  private async resurrected(files: string[]): Promise<string[]> {
+    const root = this.kb.bundle.root;
+    const bad: string[] = [];
+    for (const f of files) {
+      let raw: string;
+      try {
+        raw = await fs.readFile(path.join(root, f.slice(1)), "utf-8");
+      } catch {
+        continue; // deleted by the dream
+      }
+      const { frontmatter, body } = parseDoc(raw);
+      const refs = normalizeSources(frontmatter.sources).map((x) => x.ref);
+      if ((await forgottenRefs(root, refs)).length > 0 || (await forgottenInText(root, body)).length > 0) {
+        bad.push(f);
+      }
+    }
+    return bad;
   }
 
   /** Discard a review. Returns false when there is no such review. */
