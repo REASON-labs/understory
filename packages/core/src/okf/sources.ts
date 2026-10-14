@@ -16,6 +16,29 @@ export interface ConceptSource {
 
 /** Keep the newest N; a long-lived concept must not grow unbounded frontmatter. */
 export const MAX_SOURCES = 50;
+
+/**
+ * Run citations (`trace:<id>`) say HOW a concept was written, and every edit
+ * adds one. They are bookkeeping, and old ones point at traces that are pruned
+ * anyway, so only the newest few are kept. Real origins (URLs, documents,
+ * people) are what `memory_forget` finds a concept by: evicting them just
+ * because a concept was edited often would leave "forgotten" facts behind.
+ */
+export const MAX_RUN_CITATIONS = 10;
+
+const isRun = (s: { ref: string }) => s.ref.startsWith("trace:");
+
+/** Drop surplus run citations first; evict real origins only if the list is still over the cap. */
+function evict<T extends { ref: string }>(list: T[]): T[] {
+  const runs = list.filter(isRun);
+  const stale = new Set(runs.slice(0, Math.max(0, runs.length - MAX_RUN_CITATIONS)));
+  const kept = list.filter((s) => !stale.has(s));
+  while (kept.length > MAX_SOURCES) {
+    const i = kept.findIndex(isRun);
+    kept.splice(i === -1 ? 0 : i, 1); // oldest run citation, else oldest origin
+  }
+  return kept;
+}
 const MAX_QUOTE = 300;
 
 /**
@@ -62,5 +85,5 @@ export function mergeSources(
     byRef.set(added.ref, added);
     merged.push(added);
   }
-  return merged.slice(-MAX_SOURCES);
+  return evict(merged);
 }
