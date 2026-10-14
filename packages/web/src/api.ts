@@ -110,6 +110,7 @@ export type AcceptResult =
   | { ok: true; commit: string; filesChanged: string[]; revertCommand: string }
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "conflict"; conflicts: string[] }
+  | { ok: false; reason: "forgotten"; files: string[]; message: string }
   | { ok: false; reason: "error"; message: string };
 
 const TOKEN_KEY = "understory-token";

@@ -1,6 +1,7 @@
 import { runMutation, type MutationOutcome } from "./agent.js";
 import { clearHotMemory, recordHotDelete } from "./hot-memory.js";
 import { clearQueryCache } from "./query-cache.js";
+import { DreamReviews } from "./dream-review.js";
 import { TraceStore } from "./trace.js";
 import type { KnowledgeBase } from "../okf/index.js";
 import { normalizeHistory } from "../okf/history.js";
@@ -26,6 +27,11 @@ export interface ForgetPlan {
   redact: string[];
   /** Concepts whose prose is untouched but whose `history` trail names a forgotten run. */
   scrubHistory: string[];
+  /**
+   * Pending dream reviews (dream/<id> branches) that would bring this back if accepted later: they
+   * change an affected concept or one citing a forgotten ref. Rejected on apply.
+   */
+  dreamReviews: string[];
   /** Run traces that cite or touched affected concepts; deleted because they store instruction/answer text. */
   traces: string[];
 }
@@ -127,8 +133,18 @@ export async function planForget(kb: KnowledgeBase, target: ForgetTarget): Promi
     }
   }
 
+  // Review-mode dreams wait on a git branch holding a full copy from before this
+  // forget. Accepting one later would merge derived material back in.
+  let dreamReviews: string[] = [];
+  try {
+    dreamReviews = await new DreamReviews(kb).touching(touched, refs);
+  } catch {
+    // Not a git repo (autocommit off): there are no review branches.
+  }
+
   return {
     refs: [...refs].sort(),
+    dreamReviews: dreamReviews.sort(),
     delete: [...deleted].sort(),
     redact: [...redact].sort(),
     scrubHistory: scrubHistory.filter((p) => !redact.has(p)).sort(),
@@ -236,6 +252,11 @@ export async function runForget(
 
   // Housekeeping that lives outside the transaction. Tombstone last: it must
   // only exist once the removal has really happened.
+  // A pending dream that predates this forget would undo it when accepted.
+  if (plan.dreamReviews.length > 0) {
+    const reviews = new DreamReviews(kb);
+    for (const id of plan.dreamReviews) await reviews.reject(id).catch(() => false);
+  }
   await kb.scrubLog(plan.delete);
   await traceStore.remove(plan.traces);
   for (const p of plan.delete) recordHotDelete(kb, p);
@@ -262,6 +283,7 @@ export function formatForget(r: ForgetResult): string {
     `Delete (all provenance forgotten):\n${list(p.delete)}`,
     `Rewrite (mixed provenance or links to deleted concepts):\n${list(p.redact)}`,
     `Scrub history trail only:\n${list(p.scrubHistory)}`,
+    `Pending dream reviews ${r.status === "forgotten" ? "rejected" : "to reject"} (accepting them would undo this):\n${list(p.dreamReviews)}`,
     `Run traces ${r.status === "forgotten" ? "deleted" : "to delete"}: ${p.traces.length}`,
     ...(r.warnings.length ? [`Warnings:\n${list(r.warnings)}`] : []),
     r.status === "forgotten"

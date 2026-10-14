@@ -106,6 +106,8 @@ function ReviewCard({
           text: "Not merged: you changed the same concept(s) since this dream ran. Nothing was changed. Reject it, or merge the branch by hand.",
           conflicts: result.conflicts,
         });
+      } else if (result.reason === "forgotten") {
+        setOutcome({ kind: "error", text: result.message, conflicts: result.files });
       } else if (result.reason === "not_found") {
         setOutcome({ kind: "error", text: "This review no longer exists." });
         onChanged();
