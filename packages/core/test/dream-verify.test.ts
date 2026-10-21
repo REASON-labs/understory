@@ -83,3 +83,46 @@ describe("verifyDreamRun", () => {
     expect(bad.filter((m) => /forgotten/.test(m))).toHaveLength(2);
   });
 });
+
+describe("verifyDreamRun and links broken in pages the run never touched", () => {
+  it("fails a run that deletes a concept but fixes only the pages it edited (upstream #56)", async () => {
+    await kb.writeConcept("/dup-a.md", { type: "Note", title: "Limits" }, "100 per minute.\n", "a");
+    await kb.writeConcept("/dup-b.md", { type: "Note", title: "Limits copy" }, "See [more](/dup-a.md).\n", "b");
+    await kb.writeConcept("/guide.md", { type: "Note", title: "Guide" }, "Read [limits](/dup-a.md) first.\n", "g");
+    const baseline = await baselineBrokenLinks(kb);
+
+    await kb.deleteConcept("/dup-a.md", "merged");
+    await kb.patchConcept("/dup-b.md", { replaceBody: "100 per minute, merged.\n" }, "fixed b");
+
+    const bad = await verifyDreamRun(
+      kb,
+      run({ touched: ["/dup-a.md", "/dup-b.md"], deleted: ["/dup-a.md"] }),
+      { allowDelete: true, baselineBroken: baseline }
+    );
+    expect(bad).toHaveLength(1);
+    expect(bad[0]).toMatch(/\/guide\.md: now links to \/dup-a\.md/);
+    expect(bad[0]).toMatch(/deleted it but did not fix this page/);
+  });
+
+  it("passes once the run repoints every page that linked to the deleted concept", async () => {
+    await kb.writeConcept("/dup-a.md", { type: "Note", title: "Limits" }, "100 per minute.\n", "a");
+    await kb.writeConcept("/guide.md", { type: "Note", title: "Guide" }, "Read [limits](/dup-a.md) first.\n", "g");
+    const baseline = await baselineBrokenLinks(kb);
+    await kb.deleteConcept("/dup-a.md", "merged");
+    await kb.patchConcept("/guide.md", { replaceBody: "Read [limits](/a.md) first.\n" }, "repointed");
+    await kb.writeConcept("/a.md", { type: "Note", title: "Limits" }, "100 per minute.\n", "moved");
+    expect(
+      await verifyDreamRun(
+        kb,
+        run({ touched: ["/dup-a.md", "/guide.md", "/a.md"], deleted: ["/dup-a.md"], created: ["/a.md"] }),
+        { allowDelete: true, baselineBroken: baseline }
+      )
+    ).toEqual([]);
+  });
+
+  it("still does not blame a run for links that were already broken before it", async () => {
+    await kb.writeConcept("/old.md", { type: "Note" }, "Links [gone](/gone.md).\n", "old");
+    const baseline = await baselineBrokenLinks(kb);
+    expect(await verifyDreamRun(kb, run({ touched: ["/b.md"] }), { allowDelete: false, baselineBroken: baseline })).toEqual([]);
+  });
+});

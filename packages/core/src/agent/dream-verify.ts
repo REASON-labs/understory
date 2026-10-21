@@ -58,10 +58,16 @@ export async function verifyDreamRun(
   const existing = new Set(await kb.bundle.listConceptPaths());
   const touched = new Set(run.touched);
 
+  // Any link that was fine before the run and is broken now is the run's doing,
+  // wherever it sits. Deleting a concept breaks links in pages the run never
+  // opened (upstream issue #56), so this must not be limited to touched pages.
   for (const b of (await kb.lint()).brokenLinks) {
-    if (touched.has(b.path) && !options.baselineBroken.has(brokenKey(b))) {
-      failures.push(`${b.path}: now links to ${b.target}, which does not exist`);
-    }
+    if (options.baselineBroken.has(brokenKey(b))) continue;
+    const removed = run.deleted.includes(b.target);
+    failures.push(
+      `${b.path}: now links to ${b.target}, which does not exist` +
+        (removed && !touched.has(b.path) ? " (the run deleted it but did not fix this page)" : "")
+    );
   }
 
   for (const p of run.touched.filter((x) => existing.has(x)).sort()) {
