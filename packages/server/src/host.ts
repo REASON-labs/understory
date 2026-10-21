@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import type { KnowledgeBase } from "@understory/core";
-import { bearerAuth, bearerToken } from "./auth.js";
+import { accessFor, type AuthConfig } from "./access.js";
+import { bearerToken } from "./auth.js";
 import { ProfileError, type ProfileRegistry } from "./profiles.js";
 
 /** The memory a request was resolved to. `profile` is null in single-memory mode. */
@@ -33,18 +34,24 @@ function unauthorized(res: Response, message: string): void {
  * One bundle for everyone. AUTH_TOKEN unset → open (localhost/homelab
  * default); set → requests must carry `Authorization: Bearer <token>`.
  */
-export function singleMemoryHost(kb: KnowledgeBase, authToken: string | undefined): MemoryHost {
+export function singleMemoryHost(kb: KnowledgeBase, auth: string | AuthConfig | undefined): MemoryHost {
   const memory: ResolvedMemory = { kb, profile: null };
-  const guard = authToken ? bearerAuth(authToken) : null;
+  const config: AuthConfig = typeof auth === "string" ? { full: auth } : (auth ?? {});
   return {
     mode: "single",
     authenticate(req, res, next) {
-      const attach = () => {
-        res.locals.memory = memory;
-        next();
-      };
-      if (guard) guard(req, res, attach);
-      else attach();
+      // The token decides both whether the caller is in and what it may do.
+      const access = accessFor(bearerToken(req), config);
+      if (!access) {
+        res
+          .status(401)
+          .set("WWW-Authenticate", 'Bearer realm="understory"')
+          .json({ error: "unauthorized: set Authorization: Bearer <AUTH_TOKEN>", mode: "single" });
+        return;
+      }
+      res.locals.memory = memory;
+      res.locals.access = access;
+      next();
     },
     async memories() {
       return [memory];
@@ -69,6 +76,7 @@ export function profileMemoryHost(registry: ProfileRegistry): MemoryHost {
             return;
           }
           res.locals.memory = { kb: resolved.kb, profile: resolved.name } satisfies ResolvedMemory;
+          res.locals.access = "full"; // a profile key is full access to its own memory
           next();
         })
         .catch((err: unknown) => {

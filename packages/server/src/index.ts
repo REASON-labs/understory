@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { KnowledgeBase, resolveFallbackConfig, resolveLlmTimeout, resolveMaxSteps, resolveModelConfig } from "@understory/core";
 import express from "express";
 import { adminRouter } from "./admin.js";
+import { resolveAuthConfig } from "./access.js";
 import { healthRouter } from "./api/health.js";
 import { buildApp } from "./app.js";
 import { startDreamer } from "./dreamer.js";
@@ -53,6 +54,9 @@ try {
     if (process.env.AUTH_TOKEN) {
       console.error("[understory] AUTH_TOKEN is ignored in profile mode — each profile has its own key");
     }
+    if (process.env.AUTH_TOKEN_READONLY) {
+      console.error("[understory] AUTH_TOKEN_READONLY is ignored in profile mode (read-only profile keys are not supported yet)");
+    }
 
     const adminToken = process.env.ADMIN_TOKEN;
     if (adminToken) {
@@ -68,18 +72,27 @@ try {
   } else {
     const kb = new KnowledgeBase(bundleRoot!, { gitAutocommit });
     if (gitAutocommit) await requireGitReady(kb, "the bundle");
-    const authToken = process.env.AUTH_TOKEN;
-    if (!authToken && process.env.AUTH_REQUIRED === "true") {
-      throw new Error("AUTH_REQUIRED=true but AUTH_TOKEN is unset — refusing to start open.");
-    }
-    host = singleMemoryHost(kb, authToken);
+    const auth = resolveAuthConfig();
+    host = singleMemoryHost(kb, auth);
     health = healthRouter(kb, bundleRoot!);
     serving = `bundle ${bundleRoot}`;
-    console.log(
-      authToken
-        ? "[understory] auth: bearer token required for /mcp and /api"
-        : "[understory] auth: disabled (set AUTH_TOKEN to protect /mcp and /api)"
-    );
+    if (auth.full) {
+      console.log(
+        auth.readOnly
+          ? "[understory] auth: bearer token required for /mcp and /api; AUTH_TOKEN_READONLY grants read-only access"
+          : "[understory] auth: bearer token required for /mcp and /api"
+      );
+    } else {
+      console.log("[understory] auth: disabled (set AUTH_TOKEN to protect /mcp and /api)");
+      const bind = process.env.HOST || "0.0.0.0";
+      if (bind === "0.0.0.0" || bind === "::") {
+        console.warn(
+          "[understory] WARNING: auth is OFF and the server listens on all interfaces. Anyone who can reach this port can read " +
+            "and WRITE this memory (memory_add, memory_update, memory_forget). Set AUTH_TOKEN, or restrict who can reach it " +
+            "(HOST when running directly; BIND_ADDRESS for the compose port mapping)."
+        );
+      }
+    }
   }
 } catch (err) {
   console.error(`[understory] ${(err as Error).message}`);

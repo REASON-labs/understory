@@ -7,6 +7,7 @@ import { mcpRouter } from "./mcp/http.js";
 import { browseRouter } from "./api/browse.js";
 import { chatRouter } from "./api/chat.js";
 import { dreamRouter } from "./api/dream.js";
+import { apiAccessGuard, mcpAccessGuard } from "./access.js";
 import type { MemoryHost, ResolvedMemory } from "./host.js";
 
 export interface AppOptions {
@@ -84,13 +85,13 @@ export function buildApp(host: MemoryHost, options: AppOptions = {}): Express {
 
   const authenticate: RequestHandler = (req, res, next) => host.authenticate(req, res, next);
 
-  app.use("/mcp", authenticate, (req, res, next) => routersFor(memoryOf(res).kb).mcp(req, res, next));
+  app.use("/mcp", authenticate, mcpAccessGuard, (req, res, next) => routersFor(memoryOf(res).kb).mcp(req, res, next));
 
   // Which memory this caller is talking to — lets the UI label the profile.
   app.get("/api/profile", authenticate, (_req, res) => {
     res.json({ mode: host.mode, profile: memoryOf(res).profile });
   });
-  app.use("/api", authenticate, (req, res, next) => routersFor(memoryOf(res).kb).api(req, res, next));
+  app.use("/api", authenticate, apiAccessGuard, (req, res, next) => routersFor(memoryOf(res).kb).api(req, res, next));
 
   if (options.admin) app.use("/admin", options.admin);
 

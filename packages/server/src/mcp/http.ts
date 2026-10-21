@@ -18,7 +18,8 @@ export function mcpRouter(kb: KnowledgeBase): Router {
     const abortRequest = () => requestAbort.abort();
     req.once("aborted", abortRequest);
 
-    const server = await buildMcpServer(kb, requestAbort.signal);
+    // A read-only caller's server lists (and runs) only the read tools.
+    const server = await buildMcpServer(kb, requestAbort.signal, { readOnly: res.locals.access === "read" });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // one JSON reply per request — no long-lived SSE

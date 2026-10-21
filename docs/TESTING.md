@@ -471,6 +471,35 @@ the bad JSON gets a JSON error, not an HTML page.
 Then `AUTH_REQUIRED=true` without a token: start the server with that and no
 `AUTH_TOKEN`: PASS if it refuses to start and the log says so.
 
+### G2. Read-only access
+
+A second token lets an agent read the memory but never change it.
+```bash
+cp -a $WORK/synthetic-template $WORK/s12
+start_server s12 3823 $WORK/s12 AUTH_TOKEN=fulltok AUTH_TOKEN_READONLY=rotok
+PORT_T=3823
+KEY=rotok mc list
+KEY=rotok mc memory_status | head -3; echo "exit=$?"
+for t in 'memory_add {"content":"x"}' 'memory_update {"instruction":"x"}' 'memory_forget {"path":"/people/dana.md","dry_run":false}' 'memory_maintain {}'; do
+  set -- $t; KEY=rotok mc "$1" "${t#* }" 2>&1 | head -1
+done
+curl -s -o /dev/null -w "write tool, raw HTTP: %{http_code}\n" -X POST -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' -H 'Authorization: Bearer rotok' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_forget","arguments":{}}}' http://localhost:3823/mcp
+curl -s -o /dev/null -w "chat with read-only token: %{http_code}\n" -X POST -H 'Authorization: Bearer rotok' -H 'Content-Type: application/json' -d '{"messages":[]}' http://localhost:3823/api/chat
+curl -s -o /dev/null -w "tree with read-only token: %{http_code}\n" -H 'Authorization: Bearer rotok' http://localhost:3823/api/tree
+ls $WORK/s12/people/dana.md
+stop_server s12
+```
+- **G2a** `mc list` shows exactly three tools: `memory_query`, `memory_status`, `memory_explain`. PASS.
+- **G2b** `memory_status` works with the read-only token (exit 0). PASS.
+- **G2c** each of the four write calls prints a "read-only and cannot call ..." message and the raw HTTP request answers **403**. PASS.
+- **G2d** chat with the read-only token answers **403**, the tree answers **200**. PASS.
+- **G2e** `dana.md` still exists (nothing was forgotten). PASS.
+- **G2f** with the **full** token (`KEY=fulltok mc list`) all seven tools are listed. PASS.
+- **G2g** start the server with `AUTH_TOKEN_READONLY=x` and **no** `AUTH_TOKEN`: PASS if it refuses to start and says so.
+- **G2h** start it with no tokens on the default interface: PASS if the log shows `WARNING: auth is OFF`.
+
 ### H. Failure handling
 
 **H1 the model is unreachable: nothing is half-written.**

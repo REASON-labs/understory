@@ -2,7 +2,11 @@ services:
   understory:
     build: .
     ports:
-      - "3800:3800"
+      # BIND_ADDRESS picks which host interface publishes the port. The default
+      # (all interfaces) is unchanged; use 127.0.0.1, or your Tailscale IP, to keep
+      # the memory off the wider network. This, not HOST, is what controls exposure
+      # in Docker: inside the container the server must listen on all interfaces.
+      - "${BIND_ADDRESS:-0.0.0.0}:3800:3800"
     # Lets the container reach a llama.cpp server running on the host via
     # http://host.docker.internal:8080/v1 (see "Local llama.cpp" in the README).
     extra_hosts:
@@ -14,6 +18,7 @@ services:
       BUNDLE_ROOT: /bundle
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       AUTH_REQUIRED: ${AUTH_REQUIRED:-}
+      AUTH_TOKEN_READONLY: ${AUTH_TOKEN_READONLY:-}
       # Profiles (several isolated memories, one API key each): mount a volume
       # at /profiles and uncomment. See "Profiles" in the README.
       #PROFILES_ROOT: /profiles
