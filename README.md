@@ -186,6 +186,33 @@ claude mcp add --transport http ustory http://host:3800/mcp \
 
 The stdio transport needs no token — it's a local process spawned by the client.
 
+**The default is open, and `memory_forget` is reachable.** With no `AUTH_TOKEN`, anyone who can reach the port can call `memory_add`, `memory_update`, `memory_forget` and `memory_maintain`. The server prints a warning at startup when auth is off and it listens on all interfaces. Set `AUTH_REQUIRED=true` to make it refuse to start without a token, and use `BIND_ADDRESS` (compose) or `HOST` (running node directly) to keep the port off networks you do not trust, for example `BIND_ADDRESS=127.0.0.1` or your Tailscale IP. In Docker the port mapping decides who can connect; `HOST` alone does not.
+
+#### Read-only access
+
+Give an agent that should only *read* the memory its own token:
+
+```bash
+AUTH_TOKEN=$(openssl rand -hex 24)            # full access: keep this one to yourself
+AUTH_TOKEN_READONLY=$(openssl rand -hex 24)   # look, but never change
+```
+
+| | `AUTH_TOKEN` | `AUTH_TOKEN_READONLY` | no / wrong token |
+|---|---|---|---|
+| `memory_query`, `memory_status`, `memory_explain` | yes | yes | 401 |
+| `memory_add`, `memory_update`, `memory_forget`, `memory_maintain` | yes | **403** | 401 |
+| `/api` GET (browse, search, graph, dream status and diffs) | yes | yes | 401 |
+| `/api` POST (web chat, accept or reject a dream) | yes | **403** | 401 |
+
+A read-only client's tool list shows only the three read tools. The check is made on the request itself (including each call inside a batch), so a client cannot get a write through by naming it anyway. It needs `AUTH_TOKEN` as well (otherwise the server is open and every caller already has full access), and the two must differ; the server refuses to start otherwise. Not available in profile mode, where each profile's key is full access to that profile.
+
+```bash
+claude mcp add --transport http ustory-readonly http://host:3800/mcp \
+  --header "Authorization: Bearer <read-only token>"
+```
+
+Every tool also declares behaviour hints (`readOnlyHint`, `destructiveHint`) so clients can prompt accordingly. These describe the tool; the read-only token is what enforces it.
+
 ### Profiles: several isolated memories on one server
 
 One server can host a separate memory per profile, for example `work`, `health` and a side project. Each profile has its own bundle on disk and its own API key, and the key is the only thing that selects a memory. A request made with the `work` key is served from the `work` bundle and cannot name, read or search any other profile. The URLs stay the same for everyone.
@@ -630,6 +657,8 @@ setting from `.env`; an empty value means "use the default".
 | `LLM_API_BASE_URL` / `LLM_API_KEY` / `LLM_API_FORMAT` / `LLM_MODEL` | — / — / `openai` / auto | Primary model |
 | `LLM_FALLBACK_*` | off | Fallback model; `LLM_FALLBACK_ALLOW_FOR`, `LLM_FALLBACK_RETRY_429` |
 | `AUTH_TOKEN` / `AUTH_REQUIRED` | open / `false` | Bearer auth on `/mcp` and `/api`; refuse to start open |
+| `AUTH_TOKEN_READONLY` | unset | A second token that can only read (see [Read-only access](#read-only-access)); needs `AUTH_TOKEN` |
+| `BIND_ADDRESS` | all interfaces | Host interface the compose file publishes the port on (`127.0.0.1`, a Tailscale IP) |
 | `CORS_ORIGINS` | same-origin | Comma list, or `*` |
 | `PROFILES_ROOT` / `ADMIN_TOKEN` | off | [Profiles](#profiles-several-isolated-memories-on-one-server) (commented out in compose) |
 | `GIT_AUTOCOMMIT` / `MUTATION_ROLLBACK` | `true` / `true` | Commit every mutation; transactional runs |

@@ -12,6 +12,7 @@ import {
   type MutationOutcome,
   type QueryScope,
 } from "@understory/core";
+import { isReadTool } from "../access.js";
 import { buildSeedMemory, seedInstructions } from "./seed.js";
 
 /**
@@ -25,7 +26,17 @@ import { buildSeedMemory, seedInstructions } from "./seed.js";
  * fallback; every tool-calling client loads descriptions). Without it the
  * client model has no signal that memory might hold an answer.
  */
-export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSignal): Promise<McpServer> {
+// Behaviour hints for clients (and their permission prompts). They describe the
+// tool; they are not a security boundary. That is the read-only token.
+const READ_ONLY = { readOnlyHint: true, idempotentHint: true, openWorldHint: false } as const;
+const ADDITIVE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
+const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
+
+export async function buildMcpServer(
+  kb: KnowledgeBase,
+  abortSignal?: AbortSignal,
+  options: { readOnly?: boolean } = {}
+): Promise<McpServer> {
   // Seed generation must never prevent the server from starting — a missing
   // or empty bundle root degrades to a minimal seed, not a crash.
   const seed = await buildSeedMemory(kb).catch((err: Error) => {
@@ -43,10 +54,20 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
     { instructions: seedInstructions(seed) }
   );
 
+  // Read-only access: register every tool, then disable the write ones, so
+  // tools/list shows only what the caller may use and a call is refused.
+  const registerAll = server.registerTool.bind(server);
+  server.registerTool = ((name: string, config: never, cb: never) => {
+    const tool = registerAll(name, config, cb);
+    if (options.readOnly && !isReadTool(name)) tool.disable();
+    return tool;
+  }) as typeof server.registerTool;
+
   const queryTool = server.registerTool(
     "memory_query",
     {
       title: "Query the knowledge base",
+      annotations: READ_ONLY,
       description: queryDescription(seed),
       inputSchema: {
         question: z.string().describe("The question to answer"),
@@ -165,6 +186,7 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
     "memory_add",
     {
       title: "Add knowledge",
+      annotations: ADDITIVE,
       description:
         "Provide free-form knowledge (facts, docs, decisions, runbooks). An internal agent searches for overlap, then creates or extends OKF concepts; indexes and the update log are maintained automatically.",
       inputSchema: {
@@ -201,6 +223,7 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
     "memory_update",
     {
       title: "Update knowledge",
+      annotations: DESTRUCTIVE,
       description:
         "Instruct a change to existing knowledge (correct a fact, deprecate a concept, restructure). An internal agent locates the concepts and applies targeted edits.",
       inputSchema: {
@@ -220,6 +243,7 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
     "memory_status",
     {
       title: "Knowledge base status",
+      annotations: READ_ONLY,
       description:
         "Deterministic (no LLM): bundle statistics and OKF conformance report.",
       inputSchema: {},
@@ -258,6 +282,7 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
     "memory_explain",
     {
       title: "Explain a concept",
+      annotations: READ_ONLY,
       description:
         "Deterministic (no LLM): why the knowledge base holds a concept — its recorded sources (with the agent run that wrote it), its change history, and what links to and from it. Use it to check where a fact came from before relying on it. Gaps in the evidence are reported, not guessed.",
       inputSchema: {
@@ -281,6 +306,7 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
     "memory_forget",
     {
       title: "Forget a source or concept",
+      annotations: DESTRUCTIVE,
       description:
         "Retract knowledge at the owner's request and everything derived from it: concepts whose only provenance is the target are deleted, mixed ones are rewritten, run traces are deleted, caches are cleared, and the source is tombstoned so it cannot be cited again. Give exactly one of source (URL, trace:<id>, or bundle path) or path. DEFAULTS TO A DRY RUN that only lists what would change; call again with dry_run=false to apply. Git history is not rewritten.",
       inputSchema: {
@@ -307,6 +333,7 @@ export async function buildMcpServer(kb: KnowledgeBase, abortSignal?: AbortSigna
     "memory_maintain",
     {
       title: "Maintain / repair memory",
+      annotations: DESTRUCTIVE,
       description:
         "Health-check and repair the knowledge graph: an internal agent wires orphaned concepts (nothing links to them) into related concepts and fixes broken links. Run periodically to counter drift. No-op when the graph is already healthy.",
       inputSchema: {},
