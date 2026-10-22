@@ -512,6 +512,27 @@ stop_server s11
 ```
 PASS: exit 1, message starts `Mutation failed`, `unchanged: yes`.
 
+**H1b a deadline makes a slow add finish in time instead of being aborted.** Your calling
+agent aborts a mutation after a fixed time (about 300 s). With `AGENT_MUTATION_DEADLINE` the
+run must be finished before that. Use 30s here so it is quick to see.
+```bash
+cp -a $WORK/synthetic-template $WORK/s13
+start_server s13 3824 $WORK/s13 AGENT_MUTATION_DEADLINE=30s
+grep "mutation deadline" $WORK/logs/s13.log
+S0=$(date +%s)
+PORT_T=3824 mc memory_add '{"content":"The Helios cache keeps entries for 90 seconds, per https://example.com/helios-spec. Link it to anything related."}'; echo "exit=$?"
+echo "seconds: $(( $(date +%s) - S0 ))"
+grep -ril helios $WORK/s13 --include='*.md' | grep -v '/index.md\|/log.md' | head -2
+stop_server s13
+```
+PASS: the startup log says `mutation deadline: 30s`; the call returns in about 30 to 60 seconds
+(not minutes). Then either (a) exit 0, a concept mentioning Helios exists, and the answer ends with
+"reached its time limit and was moved to a write-only phase", or (b) exit 1 with a message saying it
+"reached its ... deadline before storing anything, so nothing was saved" (and no Helios file).
+Both are correct; the failure is that it ran past the deadline or was reported as success with
+nothing stored. Run the same add once on a server **without** the deadline and note how long it takes
+(INFO): if that is near your caller's timeout, set the deadline to about 90% of it.
+
 **H2 restart keeps everything.** After section C, stop and start the s3 server again.
 PASS: the forgotten source is still refused (repeat C6), concepts are intact, a
 pending review from D (if any) still lists.

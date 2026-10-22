@@ -11,6 +11,13 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import { buildReadTools, buildWriteTools, formatTree, type QueryScope } from "./tools.js";
 import { TraceRecorder, TraceStore, type TraceUsage } from "./trace.js";
 import type { RunInfo } from "./dream-verify.js";
+import {
+  deadlinePhase,
+  deadlineStep,
+  laterPhase,
+  resolveMutationDeadline,
+  type DeadlinePhase,
+} from "./deadline.js";
 import { parseDuration } from "../util/duration.js";
 
 const DEFAULT_MAX_STEPS = 12;
@@ -59,6 +66,13 @@ export interface AgentOptions {
    * synthesize overviews.
    */
   deriveNewConcepts?: boolean;
+  /**
+   * Mutation only: the time by which the run must be finished (see deadline.ts).
+   * Past 65% of it the run may only write; past 90% it gets no tools. undefined
+   * means AGENT_MUTATION_DEADLINE; null (or 0) switches the deadline off, which
+   * is what unattended runs (dreams, forget) use.
+   */
+  deadlineMs?: number | null;
 }
 
 /** Thrown inside the mutation transaction so an over-budget run rolls back. */
@@ -362,20 +376,39 @@ export async function runMutation(
   let modelChain: string[] = [];
   const scope: RunScope = { commitPrefix: options.commitPrefix, touched: new Set(), commits: [] };
   const limit = options.maxConceptsChanged;
+  const startedAt = Date.now();
+  const deadlineMs = options.deadlineMs === undefined ? resolveMutationDeadline().ms : options.deadlineMs || null;
+  const systemPrompt = buildSystemPrompt(ctx);
+  const deadline = { reached: "explore" as DeadlinePhase };
 
   const runAgent = async () => {
     const resolved = await resolveAgentModel(options, "mutate");
     modelChain = resolved.modelChain;
     const before = options.verifyRun ? new Set(await kb.bundle.listConceptPaths()) : null;
+    const tools = {
+      ...buildReadTools(kb, recorder),
+      ...buildWriteTools(kb, filesChanged, recorder, { deriveNew: options.deriveNewConcepts }),
+    };
     const result = await generateText({
       model: resolved.model,
       abortSignal: modelAbortSignal(options),
-      system: buildSystemPrompt(ctx),
+      system: systemPrompt,
       prompt: instruction,
-      tools: {
-        ...buildReadTools(kb, recorder),
-        ...buildWriteTools(kb, filesChanged, recorder, { deriveNew: options.deriveNewConcepts }),
-      },
+      tools,
+      // With a deadline, walk the run explore -> write -> wrap so it finishes (and
+      // stores something) before its caller gives up and aborts it.
+      ...(deadlineMs
+        ? {
+            prepareStep: () => {
+              const elapsed = Date.now() - startedAt;
+              const phase = deadlinePhase(elapsed, deadlineMs);
+              deadline.reached = laterPhase(deadline.reached, phase);
+              const wrote = filesChanged.size > 0 || scope.touched.size > 0;
+              const step = deadlineStep(phase, wrote, deadlineMs - elapsed, systemPrompt);
+              return step as { system?: string; activeTools?: Array<keyof typeof tools> };
+            },
+          }
+        : {}),
       stopWhen: stepCountIs(maxSteps),
       temperature: 0.2,
     });
@@ -425,6 +458,16 @@ export async function runMutation(
         ? { ok: false, status: "partial", filesChanged: files, error: message, traceId: trace.id }
         : { ok: false, status: "failed", error: message };
     }
+    // Ran out of time with nothing stored: say so plainly. "Success" with an empty
+    // file list would read as if the fact had been saved.
+    if (deadline.reached === "wrap" && filesChanged.size === 0 && scope.touched.size === 0) {
+      const message =
+        `The run reached its ${Math.round((deadlineMs ?? 0) / 1000)}s deadline before storing anything, so nothing was saved. ` +
+        `Try again with a narrower instruction, or raise AGENT_MUTATION_DEADLINE if the caller allows more time.`;
+      const trace = recorder.finalize("mutation", instruction, message, "failed", modelChain, sumStepsUsage(result.steps));
+      await traceStore(kb).save(trace);
+      return { ok: false, status: "failed", error: message };
+    }
     // A run that wrote nothing AND said nothing is a stalled/flaked model.
     // Writing nothing while explaining why (knowledge already present,
     // nothing genuinely related to link) is a legitimate outcome.
@@ -434,12 +477,18 @@ export async function runMutation(
       await traceStore(kb).save(trace);
       return { ok: false, status: "failed", error: message };
     }
-    const trace = recorder.finalize("mutation", instruction, result.text, "success", modelChain, sumStepsUsage(result.steps));
+    // A run pushed into its write phase stored what it had, but did less exploring
+    // (fewer related concepts read or linked): tell the caller rather than hide it.
+    const summary =
+      deadline.reached === "explore"
+        ? result.text
+        : `${result.text}\n\n(Note: this run reached its time limit and was moved to a write-only phase, so it may have linked fewer related concepts than usual.)`;
+    const trace = recorder.finalize("mutation", instruction, summary, "success", modelChain, sumStepsUsage(result.steps));
     await traceStore(kb).save(trace);
     return {
       ok: true,
       result: {
-        summary: result.text,
+        summary,
         filesChanged: [...new Set([...filesChanged, ...scope.touched])].sort(),
         steps: result.steps.length,
         traceId: trace.id,

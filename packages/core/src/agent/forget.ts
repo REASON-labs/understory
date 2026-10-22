@@ -47,7 +47,7 @@ export interface ForgetResult {
 type Runner = (
   kb: KnowledgeBase,
   instruction: string,
-  options?: { maxSteps?: number }
+  options?: { maxSteps?: number; deadlineMs?: number | null }
 ) => Promise<MutationOutcome>;
 
 /**
@@ -193,7 +193,7 @@ export async function runForget(
       `\n\nConcepts to rewrite:\n${lines.join("\n")}\n\n` +
       `Rules: keep everything unrelated. Do NOT restate removed content anywhere (not in log_summary, not in "replaced", ` +
       `not in sources). Set every log_summary to exactly: ${JSON.stringify(NEUTRAL)}. Do not create or delete concepts.`;
-    const outcome = await runner(kb, instruction, { maxSteps: redactionStepCap(plan.redact.length) });
+    const outcome = await runner(kb, instruction, { maxSteps: redactionStepCap(plan.redact.length), deadlineMs: null });
     // The run's trace stores the instruction (with excerpts): never keep it.
     if (outcome.ok) {
       await traceStore.remove([outcome.result.traceId]);

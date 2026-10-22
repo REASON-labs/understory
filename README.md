@@ -553,6 +553,18 @@ git handles runs that "succeed" but write something wrong. A rollback with git
 enabled lands as a `revert:` commit rather than a dirty working tree.
 `MUTATION_ROLLBACK=false` restores upstream behaviour.
 
+#### Mutation deadline
+
+An agent that calls `memory_add` usually gives up after a fixed time (commonly 300 s). A local model that keeps searching and reading until then is aborted, the run is rolled back, and the fact is never stored. Set `AGENT_MUTATION_DEADLINE` to the time by which a mutation must be *completely finished*, a little under your caller's timeout (`270s` for a 300 s caller), and the run is walked through three phases:
+
+| Phase | From | What the run may do |
+|---|---|---|
+| explore | start | everything |
+| write | 65% of the deadline | only `write_concept` and `patch_concept`, told to stop reading and store it |
+| wrap | 90% | no tools; it must say what it changed and finish |
+
+Deleting is never forced by a clock. If the run reaches wrap-up with nothing stored it is reported as a **failure** ("nothing was saved"), never as a success with an empty file list; if it stored something in the write phase, its summary says it was cut short and may have linked fewer related concepts. Off unless set; dreams and forgetting are unattended and never use it; `memory_query` is unaffected. The server logs the setting at startup (`mutation deadline: ...`).
+
 ### Provenance
 
 Every concept written through the agent records where its knowledge came from in a `sources` frontmatter list:
@@ -664,6 +676,7 @@ setting from `.env`; an empty value means "use the default".
 | `GIT_AUTOCOMMIT` / `MUTATION_ROLLBACK` | `true` / `true` | Commit every mutation; transactional runs |
 | `LLM_TIMEOUT` | none | Deadline for one model run, e.g. `30m` |
 | `AGENT_MAX_STEPS` | `12` | Steps per agent run |
+| `AGENT_MUTATION_DEADLINE` | off | Time by which an interactive `memory_add` / `memory_update` must finish (for example `270s`); see [Mutation deadline](#mutation-deadline) |
 | `QUERY_CACHE` / `QUERY_CACHE_TTL` | `true` / `24h` | Repeated-query cache |
 | `HOT_MEMORY` / `HOT_MEMORY_TTL` | `true` / `1h` | Recent working set checked before a full run |
 | `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation) |
