@@ -6,8 +6,8 @@ simple agent can follow it literally.
 
 **What this covers:** provenance and `memory_explain`, supersession history,
 `memory_forget`, dream guardrails, verification, derived concepts, review mode
-(API and web UI), profiles, auth/CORS/health, failure handling, the Docker
-image, and a multi-week soak period.
+(API and web UI), profiles, auth/CORS/health, the read-only token, the mutation
+deadline, failure handling, the Docker image, and a multi-week soak period.
 
 **What the automated suite already proves** (CI runs it on every PR): the logic
 of every feature, with the model mocked. This guide exists for what a mock cannot
@@ -44,7 +44,7 @@ git remote -v | head -1               # must say REASON-labs/understory
 git status --short                    # must print nothing
 git checkout main && git pull origin main
 pnpm install && pnpm -r build
-pnpm test                             # expect: all green (core 250+, server 73+)
+pnpm test                             # expect: all green (hundreds of tests in core and server; any failure is a stop)
 ```
 
 **PASS:** build has no errors and `pnpm test` ends green.
@@ -587,8 +587,8 @@ Paste `$WORK/results.md` and the output of every FAIL/WARN. Decide with this tab
 
 | Condition | Decision |
 |---|---|
-| Any `FAIL` in sections C (forget), D3-D5 (review mode), F (profiles) or I (Docker) | **Do not deploy.** Send me the output. |
-| `FAIL` in A, B, G, H | Fix before deploying; not a data-safety risk but a regression. |
+| Any `FAIL` in sections C (forget), D3-D5 (review mode), F (profiles), G2 (read-only token) or I (Docker) | **Do not deploy.** Send me the output. |
+| `FAIL` in A, B, G, H (including H1b, the mutation deadline) | Fix before deploying; not a data-safety risk but a regression. |
 | Only `WARN`s (model ignored `replaced`, did not cite a URL, did not mark an overview derived) | **Safe to deploy.** Say which WARNs so the prompts can be tightened. |
 | Everything `PASS`/`INFO` | **Deploy** (section 6), then start the soak. |
 
@@ -653,11 +653,19 @@ cd ~/understory
 git rev-parse HEAD > ~/understory-previous-commit.txt          # the way back for code
 cp -a $LIVE ~/understory-bundle-backup-$(date +%Y%m%d-%H%M)    # the way back for data
 grep -n BUNDLE_PATH .env                                      # must point at the real bundle
+grep -nE 'AUTH_TOKEN|AUTH_TOKEN_READONLY|BIND_ADDRESS|AGENT_MUTATION_DEADLINE|DREAM_' .env   # settings you want in place; none of the new ones is required
 git pull origin main
 docker compose up -d --build
 sleep 15 && docker compose ps && curl -s http://localhost:3800/health
 node scripts/soak-report.mjs http://localhost:3800 -
 ```
+Read the start of `docker compose logs` too: it prints the model, auth mode, step budget and
+mutation deadline, and a `WARNING` if auth is off while the server listens on all interfaces.
+Nothing new changes behaviour until you set it: the read-only token needs `AUTH_TOKEN` and
+`AUTH_TOKEN_READONLY`, the port is published on `BIND_ADDRESS` (default every interface, as
+before), and `AGENT_MUTATION_DEADLINE` is off unless set (use about 90% of your calling agent's
+timeout, for example `270s` for 300 s).
+
 Rollback: `git checkout $(cat ~/understory-previous-commit.txt) && docker compose up -d --build`.
 To undo one bad dream: `git -C $LIVE revert -m 1 <commit>` (the accept commit) or
 `git -C $LIVE revert <commit>` for an apply-mode `dream:` commit; stop the container first
@@ -677,6 +685,11 @@ if you restore the whole backup directory.
   with only the `insights` signal always marks it.
 - **Verification is structural.** It checks citations, deletions, links and forgotten
   sources; it cannot judge whether a summary is accurate.
+- **The mutation deadline makes a slow run finish; it does not make the model faster.** A run
+  cut off before it stored anything fails and says so (retry with a narrower instruction), and
+  one long model step can overshoot the deadline, so leave a margin under the caller's timeout.
+- **The read-only token does not exist in profile mode**, and a read-only caller can still run
+  `memory_query`, which spends model tokens and writes caches and traces (never the bundle).
 - **All profiles share one LLM configuration.** Their text goes to the same model.
 - **Dreams run one memory at a time**, in turn, never in parallel.
 - **On Windows hosts** git is slow; allow extra time. (Your host is Linux.)
