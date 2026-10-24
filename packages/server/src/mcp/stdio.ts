@@ -7,7 +7,7 @@
  *     -- node <repo>/packages/server/dist/mcp/stdio.js
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { KnowledgeBase, resolveFallbackConfig, resolveLlmTimeout, resolveMaxSteps, resolveModelConfig } from "@understory/core";
+import { KnowledgeBase, resolveFallbackConfig, resolveLlmTimeout, resolveMaxSteps, resolveModelConfig, resolveMutationDeadline } from "@understory/core";
 import { buildMcpServer } from "./server.js";
 
 const bundleRoot = process.env.BUNDLE_ROOT;
@@ -43,6 +43,9 @@ console.error(`[understory] llm timeout: ${process.env.LLM_TIMEOUT && llmTimeout
 const maxSteps = resolveMaxSteps();
 if (maxSteps.warning) console.error(`[understory] ${maxSteps.warning}`);
 console.error(`[understory] agent max steps: ${maxSteps.steps}`);
+const mutationDeadline = resolveMutationDeadline();
+if (mutationDeadline.warning) console.error(`[understory] ${mutationDeadline.warning}`);
+console.error(`[understory] mutation deadline: ${mutationDeadline.ms ? `${Math.round(mutationDeadline.ms / 1000)}s (write-only from 65%, no tools from 90%)` : "none"}`);
 
 const kb = new KnowledgeBase(bundleRoot, {
   gitAutocommit: process.env.GIT_AUTOCOMMIT !== "false",

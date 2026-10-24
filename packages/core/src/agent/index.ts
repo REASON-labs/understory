@@ -10,3 +10,5 @@ export { planForget, runForget, formatForget } from "./forget.js";
 export type { ForgetTarget, ForgetPlan, ForgetResult } from "./forget.js";
 export { verifyDreamRun, baselineBrokenLinks } from "./dream-verify.js";
 export type { RunInfo, VerifyOptions } from "./dream-verify.js";
+export { resolveMutationDeadline, deadlinePhase, deadlineStep } from "./deadline.js";
+export type { DeadlinePhase } from "./deadline.js";

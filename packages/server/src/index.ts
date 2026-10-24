@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { KnowledgeBase, resolveFallbackConfig, resolveLlmTimeout, resolveMaxSteps, resolveModelConfig } from "@understory/core";
+import { KnowledgeBase, resolveFallbackConfig, resolveLlmTimeout, resolveMaxSteps, resolveModelConfig, resolveMutationDeadline } from "@understory/core";
 import express from "express";
 import { adminRouter } from "./admin.js";
 import { resolveAuthConfig } from "./access.js";
@@ -134,6 +134,9 @@ console.log(`[understory] llm timeout: ${process.env.LLM_TIMEOUT && llmTimeout.m
 const maxSteps = resolveMaxSteps();
 if (maxSteps.warning) console.error(`[understory] ${maxSteps.warning}`);
 console.log(`[understory] agent max steps: ${maxSteps.steps}`);
+const mutationDeadline = resolveMutationDeadline();
+if (mutationDeadline.warning) console.error(`[understory] ${mutationDeadline.warning}`);
+console.log(`[understory] mutation deadline: ${mutationDeadline.ms ? `${Math.round(mutationDeadline.ms / 1000)}s (write-only from 65%, no tools from 90%)` : "none"}`);
 
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
 const app = buildApp(host, { webDist, admin, health });

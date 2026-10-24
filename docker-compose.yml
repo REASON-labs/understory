@@ -40,6 +40,7 @@ services:
       # in .env had no effect in the container. Empty means "use the default".
       LLM_TIMEOUT: ${LLM_TIMEOUT:-}
       AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-}
+      AGENT_MUTATION_DEADLINE: ${AGENT_MUTATION_DEADLINE:-}
       MUTATION_ROLLBACK: ${MUTATION_ROLLBACK:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       QUERY_CACHE: ${QUERY_CACHE:-}

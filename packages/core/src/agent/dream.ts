@@ -202,6 +202,8 @@ export async function runDream(
       ? { verifyRun: (k, run) => verifyDreamRun(k, run, { allowDelete, baselineBroken }) }
       : {}),
     rollbackOnStepLimit: true,
+    // An unattended dream is not racing a caller's timeout.
+    deadlineMs: null,
     deriveNewConcepts: signals.every((s) => s.kind === "insights"),
     ...options,
     commitPrefix: DREAM_COMMIT_PREFIX,

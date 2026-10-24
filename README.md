@@ -146,6 +146,8 @@ node packages/server/dist/index.js
 # → http://localhost:3800  (web UI + /api + /mcp)
 ```
 
+**Running directly on a bundle that lives inside a clone:** `./sample-bundle` is a folder in this repository, and `GIT_AUTOCOMMIT` is on by default, so every mutation would be committed to *this repository's* history (the server prints a `WARNING` at startup saying so). For a throwaway try-out add `GIT_AUTOCOMMIT=false`, or copy the bundle somewhere outside the clone first (`cp -r sample-bundle ~/my-bundle`).
+
 Or build the container yourself: `docker compose up --build` (the repo's [docker-compose.yml](docker-compose.yml) builds from source and mounts `./sample-bundle` unless `BUNDLE_PATH` is set in `.env`).
 
 Dev mode (server on :3800, Vite HMR on :5180 with proxy):
@@ -553,6 +555,18 @@ git handles runs that "succeed" but write something wrong. A rollback with git
 enabled lands as a `revert:` commit rather than a dirty working tree.
 `MUTATION_ROLLBACK=false` restores upstream behaviour.
 
+#### Mutation deadline
+
+An agent that calls `memory_add` usually gives up after a fixed time (commonly 300 s). A local model that keeps searching and reading until then is aborted, the run is rolled back, and the fact is never stored. Set `AGENT_MUTATION_DEADLINE` to the time by which a mutation must be *completely finished*, a little under your caller's timeout (`270s` for a 300 s caller), and the run is walked through three phases:
+
+| Phase | From | What the run may do |
+|---|---|---|
+| explore | start | everything |
+| write | 65% of the deadline | only `write_concept` and `patch_concept`, told to stop reading and store it |
+| wrap | 90% | no tools; it must say what it changed and finish |
+
+Deleting is never forced by a clock. If the run reaches wrap-up with nothing stored it is reported as a **failure** ("nothing was saved"), never as a success with an empty file list; if it stored something in the write phase, its summary says it was cut short and may have linked fewer related concepts. Off unless set; dreams and forgetting are unattended and never use it; `memory_query` is unaffected. The server logs the setting at startup (`mutation deadline: ...`).
+
 ### Provenance
 
 Every concept written through the agent records where its knowledge came from in a `sources` frontmatter list:
@@ -617,12 +631,14 @@ Compared with [upstream](https://github.com/thecodacus/understory):
 
 | Area | Change |
 |---|---|
-| Write safety | Transactional mutations with rollback ([Mutation safety](#mutation-safety)); `GIT_AUTOCOMMIT` on by default |
-| Provenance | Per-fact `sources`, capped `history` of superseded facts, `memory_explain`, `memory_forget` with tombstones ([Provenance](#provenance)) |
-| Security | CORS locked to same-origin unless `CORS_ORIGINS` is set; `AUTH_REQUIRED=true` refuses to start without `AUTH_TOKEN` |
-| Config | Single `LLM_API_*` provider config (legacy per-provider keys removed); `HOST` bind address; `BUNDLE_PATH` for the compose mount |
-| Dreaming | Per-signal control (`DREAM_SIGNALS`), change budget with full rollback (`DREAM_MAX_CHANGES`), `dream:`-prefixed commits with a one-command revert, review mode (`DREAM_MODE=review`), `/api/dream/preview` and `/api/dream/status` |
-| Ops | `/health`, `scripts/rollout-test.mjs`, recall benchmark (`pnpm bench:recall`) |
+| Write safety | Transactional mutations with rollback ([Mutation safety](#mutation-safety)); `GIT_AUTOCOMMIT` on by default; a startup warning when the bundle sits inside another git repository |
+| Mutation deadline | `AGENT_MUTATION_DEADLINE` walks an interactive `memory_add` / `memory_update` through explore, write-only and wrap-up phases so it stores its fact before the caller times out ([Mutation deadline](#mutation-deadline)) |
+| Provenance | Per-fact `sources` (a run's own citation is kept to the newest 10 so real origins survive), capped `history` of superseded facts, `memory_explain` ([Provenance](#provenance)) |
+| Forgetting | `memory_forget`: dry-run by default, cascades through derived concepts, rewrites mixed ones, tombstones the source (hashes only), clears traces and caches, and rejects pending dream reviews that would undo it ([Forgetting](#forgetting)) |
+| Dreaming | Per-signal control (`DREAM_SIGNALS`), change budget with full rollback (`DREAM_MAX_CHANGES`), `dream:`-prefixed commits with a one-command revert, deterministic verification before commit (`DREAM_VERIFY`), step-limited dreams rolled back, derived concepts for syntheses, review mode (`DREAM_MODE=review`) with a web panel, `/api/dream/preview` and `/api/dream/status` |
+| Security | CORS locked to same-origin unless `CORS_ORIGINS` is set; `AUTH_REQUIRED=true` refuses to start without `AUTH_TOKEN`; a second read-only token (`AUTH_TOKEN_READONLY`); tool annotations (`readOnlyHint`, `destructiveHint`); a startup warning when auth is off on all interfaces ([Auth](#auth)) |
+| Config | Single `LLM_API_*` provider config (legacy per-provider keys removed); `HOST` / `BIND_ADDRESS` for who can connect; `BUNDLE_PATH` for the compose mount; every documented setting forwarded by both compose files |
+| Ops | `/health`; CI (build, tests, container image build) on every PR, Docker publish on release tags only; `docs/TESTING.md` with `scripts/rollout-test.mjs`, `make-test-bundle.mjs`, `dream-now.mjs`, `mcp-call.mjs` and `soak-report.mjs`; recall benchmark (`pnpm bench:recall`) |
 
 Upstream changes are merged in periodically (`git fetch upstream && git merge upstream/main`).
 
@@ -635,7 +651,7 @@ cd /path/to/understory
 git rev-parse --short HEAD                         # note the current commit: your way back
 tar czf ~/understory-bundle-$(date +%F).tgz -C "$BUNDLE_PATH" .   # back up the bundle
 git pull && docker compose up -d --build
-docker compose logs --tail 20                      # model, auth, step budget, dreaming
+docker compose logs --tail 25                      # model, auth, step budget, mutation deadline, dreaming; read any WARNING
 ```
 
 Rolling back code: `git checkout <previous commit> && docker compose up -d --build`.
@@ -655,7 +671,8 @@ setting from `.env`; an empty value means "use the default".
 | Setting | Default | Purpose |
 |---|---|---|
 | `LLM_API_BASE_URL` / `LLM_API_KEY` / `LLM_API_FORMAT` / `LLM_MODEL` | — / — / `openai` / auto | Primary model |
-| `LLM_FALLBACK_*` | off | Fallback model; `LLM_FALLBACK_ALLOW_FOR`, `LLM_FALLBACK_RETRY_429` |
+| `LLM_FALLBACK_API_BASE_URL` / `_API_KEY` / `_API_FORMAT` / `_MODEL` | off | Fallback model; also `LLM_FALLBACK_ALLOW_FOR`, `LLM_FALLBACK_RETRY_429` |
+| `PORT` / `HOST` | `3800` / all interfaces | Port and interface when running node directly. In Docker the container always listens on 3800 and `BIND_ADDRESS` plus the compose port mapping decide who can connect |
 | `AUTH_TOKEN` / `AUTH_REQUIRED` | open / `false` | Bearer auth on `/mcp` and `/api`; refuse to start open |
 | `AUTH_TOKEN_READONLY` | unset | A second token that can only read (see [Read-only access](#read-only-access)); needs `AUTH_TOKEN` |
 | `BIND_ADDRESS` | all interfaces | Host interface the compose file publishes the port on (`127.0.0.1`, a Tailscale IP) |
@@ -664,6 +681,7 @@ setting from `.env`; an empty value means "use the default".
 | `GIT_AUTOCOMMIT` / `MUTATION_ROLLBACK` | `true` / `true` | Commit every mutation; transactional runs |
 | `LLM_TIMEOUT` | none | Deadline for one model run, e.g. `30m` |
 | `AGENT_MAX_STEPS` | `12` | Steps per agent run |
+| `AGENT_MUTATION_DEADLINE` | off | Time by which an interactive `memory_add` / `memory_update` must finish (for example `270s`); see [Mutation deadline](#mutation-deadline) |
 | `QUERY_CACHE` / `QUERY_CACHE_TTL` | `true` / `24h` | Repeated-query cache |
 | `HOT_MEMORY` / `HOT_MEMORY_TTL` | `true` / `1h` | Recent working set checked before a full run |
 | `DREAM_INTERVAL` / `DREAM_SIGNALS` / `DREAM_INSIGHTS` | off | [Dreaming](#dreaming-autonomous-consolidation) |
