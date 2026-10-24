@@ -15,7 +15,7 @@ Used for: all repos agents work on (understory, my-site, reason.direct, rentstuf
 - Agents push `agent/*` branches to Forgejo and open PRs there.
 - **This address is private — do not publish it publicly.**
 
-Credentials are in `LOCAL-AGENT-INTRO.md`. Each agent has its own account.
+Each agent has its own Forgejo account, SSH key and token; ask Jay for access. Never share or copy another account's credentials.
 
 ## GitHub (downstream mirror only)
 
@@ -51,10 +51,4 @@ GitHub is only a downstream mirror. Agents **never** push to GitHub or open PRs 
 
 - Never print, write, or embed credentials in commits, PR descriptions, or chat.
 - Tokens live in environment variables or files with mode 600.
-- SSH keys are in `~/.ssh/` and referenced in `~/.ssh/config`.</parameter>
-</function>
-</tool_call>
-<tool_call>
-<function=write_file>
-<parameter=path>
-/home/jay/git/understory/docs/devops/git-process.md
+- SSH keys are in `~/.ssh/` and referenced in `~/.ssh/config`.
