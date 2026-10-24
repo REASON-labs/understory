@@ -2,28 +2,29 @@
 
 Jay runs two git remotes. Agents use the appropriate one depending on the repo.
 
-## GitHub (remote)
+## Forgejo (primary remote — LAN)
+
+| What | Address |
+|---|---|
+| Web UI and API | http://192.168.254.223:3000 (API at /api/v1) |
+| Git over SSH | ssh://git@192.168.254.223:2222 |
+| SSH alias | `forgejo` (port 2222) |
+
+Used for: all repos agents work on (understory, my-site, reason.direct, rentstuff, freestuff, earthseed.online, jaybb.com).
+
+- Agents push `agent/*` branches to Forgejo and open PRs there.
+- **This address is private — do not publish it publicly.**
+
+Credentials are in `LOCAL-AGENT-INTRO.md`. Each agent has its own account.
+
+## GitHub (downstream mirror only)
 
 | What | Address |
 |---|---|
 | Web | https://github.com/REASON-labs |
 | Git SSH | git@github.com:REASON-labs/ |
 
-Used for: my-site, reason.direct, rentstuff, freestuff, earthseed.online, understory, jaybb.com, reason-direct.
-
-Credentials are in the web-dev sandbox via `GH_TOKEN` (fine-grained, scoped to the five site repos). Other agents use their own tokens.
-
-## Forgejo (local LAN)
-
-| What | Address |
-|---|---|
-| Web UI and API | http://192.168.254.223:3000 (API at /api/v1) |
-| Git over SSH | ssh://git@192.168.254.223:2222 |
-| Server SSH host key (RSA 4096) | SHA256:QC2YXss7XU/gfA43cmAGI5PY4xAQtgLKr65LQ9F+ELo |
-
-Used for: local repos that contain credentials or are not ready for GitHub.
-
-Credentials are in `LOCAL-AGENT-INTRO.md`. Each agent has its own account.
+GitHub is only a downstream mirror. Agents **never** push to GitHub or open PRs there. It is used by Vercel to deploy some repos (my-site, earthseed.online).
 
 ## The process
 
@@ -31,9 +32,9 @@ Credentials are in `LOCAL-AGENT-INTRO.md`. Each agent has its own account.
 2. **Create a branch** named `agent/<short-description>` — descriptive but short (no spaces, use hyphens).
 3. **Make your changes** on the branch. Run tests and dev servers locally before pushing.
 4. **Commit** with messages that explain why, not what. Keep commits small and reviewable.
-5. **Push** the branch to the remote.
-6. **Open a draft PR** against the default branch. Describe the change, what you tested, and any gotchas.
-7. **Stop.** Jay reviews and merges. The merge is the production deploy.
+5. **Push** the branch to Forgejo (`origin`).
+6. **Open a draft PR** against the default branch on Forgejo. Describe the change, what you tested, and any gotchas.
+7. **Stop.** Jay reviews and merges. For repos Vercel deploys from GitHub (my-site, earthseed.online) the merge triggers a deploy; for others (e.g. reason.direct) deployment is manual — check the repo's AGENTS.md.
 
 ### Rules
 
@@ -50,4 +51,10 @@ Credentials are in `LOCAL-AGENT-INTRO.md`. Each agent has its own account.
 
 - Never print, write, or embed credentials in commits, PR descriptions, or chat.
 - Tokens live in environment variables or files with mode 600.
-- SSH keys are in `~/.ssh/` and referenced in `~/.ssh/config`.
+- SSH keys are in `~/.ssh/` and referenced in `~/.ssh/config`.</parameter>
+</function>
+</tool_call>
+<tool_call>
+<function=write_file>
+<parameter=path>
+/home/jay/git/understory/docs/devops/git-process.md
