@@ -139,7 +139,9 @@ if (mutationDeadline.warning) console.error(`[understory] ${mutationDeadline.war
 console.log(`[understory] mutation deadline: ${mutationDeadline.ms ? `${Math.round(mutationDeadline.ms / 1000)}s (write-only from 65%, no tools from 90%)` : "none"}`);
 
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
-const app = buildApp(host, { webDist, admin, health });
+const fileApi = process.env.FILE_API?.trim() === "true";
+console.log(`[understory] file api: ${fileApi ? "enabled (/api/file: exact create, replace and delete with the full token)" : "off"}`);
+const app = buildApp(host, { webDist, admin, health, fileApi });
 
 const port = Number(process.env.PORT ?? 3800);
 app.listen(port, process.env.HOST || "0.0.0.0", () => {

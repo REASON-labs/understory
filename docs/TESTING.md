@@ -500,6 +500,30 @@ stop_server s12
 - **G2g** start the server with `AUTH_TOKEN_READONLY=x` and **no** `AUTH_TOKEN`: PASS if it refuses to start and says so.
 - **G2h** start it with no tokens on the default interface: PASS if the log shows `WARNING: auth is OFF`.
 
+### G3. Exact file API (`FILE_API=true`)
+
+Plain writes at exact paths, no model involved.
+```bash
+cp -a $WORK/synthetic-template $WORK/s13
+start_server s13 3824 $WORK/s13 AUTH_TOKEN=fulltok AUTH_TOKEN_READONLY=rotok FILE_API=true
+F=http://localhost:3824/api/file; J='Content-Type: application/json'; A='Authorization: Bearer fulltok'
+put() { curl -s -o /dev/null -w "$1: %{http_code}\n" -X PUT -H "$J" -H "${3:-$A}" -d "$2" $F; }
+put create '{"path":"/household/upkeep/garbage.md","mode":"create","frontmatter":{"type":"upkeep","title":"Garbage"},"body":"Bins out.\n"}'
+put "create again" '{"path":"/household/upkeep/garbage.md","mode":"create","frontmatter":{"type":"upkeep"},"body":"x"}'
+put "dot folder" '{"path":"/.git/x.md","mode":"upsert","frontmatter":{"type":"t"},"body":"x"}'
+put "read-only token" '{"path":"/household/x.md","mode":"create","frontmatter":{"type":"t"},"body":"x"}' 'Authorization: Bearer rotok'
+H=$(curl -s -H "$A" "$F?path=/household/upkeep/garbage.md" | node -pe 'JSON.parse(require("fs").readFileSync(0)).hash')
+put "stale ifMatch" '{"path":"/household/upkeep/garbage.md","mode":"replace","ifMatch":"00","frontmatter":{"type":"upkeep"},"body":"y"}'
+put "good ifMatch" "{\"path\":\"/household/upkeep/garbage.md\",\"mode\":\"replace\",\"ifMatch\":\"$H\",\"frontmatter\":{\"type\":\"upkeep\",\"title\":\"Garbage\"},\"body\":\"Tuesday.\\n\"}"
+curl -s -o /dev/null -w "delete: %{http_code}\n" -X DELETE -H "$A" "$F?path=/household/upkeep/garbage.md"
+git -C $WORK/s13 log --oneline | head -3
+stop_server s13
+```
+- **G3a** create **201**, create again **409**, dot folder **400**, read-only token **403**. PASS.
+- **G3b** stale ifMatch **409**, good ifMatch **200**, delete **200**. PASS.
+- **G3c** the git log shows the deletion, the replace and the creation as separate commits. PASS.
+- **G3d** without `FILE_API=true`, `GET /api/file?path=/areas/x.md` answers **404**. PASS.
+
 ### H. Failure handling
 
 **H1 the model is unreachable: nothing is half-written.**

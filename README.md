@@ -215,6 +215,27 @@ claude mcp add --transport http ustory-readonly http://host:3800/mcp \
 
 Every tool also declares behaviour hints (`readOnlyHint`, `destructiveHint`) so clients can prompt accordingly. These describe the tool; the read-only token is what enforces it.
 
+### Exact file API
+
+`memory_add` and `memory_update` hand your text to the agent, which decides where it goes. A
+program that already knows the exact path and content (a household app, an importer whose
+items a person approved) needs a plain write instead. Set `FILE_API=true` and it gets one:
+
+| Request | Does |
+|---|---|
+| `GET /api/file?path=/a/b.md` | `{ path, frontmatter, body, raw, hash }`; `hash` is the SHA-256 of the file |
+| `PUT /api/file` with `{ path, frontmatter, body, mode, ifMatch?, summary? }` | `mode` `create` (409 if it exists), `replace` (404 if it doesn't) or `upsert`. `ifMatch` = a hash from GET: 409 if the file changed since |
+| `DELETE /api/file?path=/a/b.md&ifMatch=<hash>` | Deletes it (`ifMatch` optional) |
+
+Writes take the bundle write lock and go through the same path as the agent's write tools:
+`type` is required, frontmatter must be scalars or lists of scalars, `timestamp` is set by the
+server, indexes and `log.md` are updated, and `GIT_AUTOCOMMIT` commits each write (`summary`
+becomes the commit message). The read-only token can GET but not write. Paths are checked
+more strictly than the agent's: every segment starts with a letter or digit, so `.git/`,
+`.traces/` and other dot-folders can't be touched, and `index.md` / `log.md` are refused.
+There is no per-folder limit here: a caller that should only write some folders must enforce
+that itself.
+
 ### Profiles: several isolated memories on one server
 
 One server can host a separate memory per profile, for example `work`, `health` and a side project. Each profile has its own bundle on disk and its own API key, and the key is the only thing that selects a memory. A request made with the `work` key is served from the `work` bundle and cannot name, read or search any other profile. The URLs stay the same for everyone.
@@ -637,6 +658,7 @@ Compared with [upstream](https://github.com/thecodacus/understory):
 | Forgetting | `memory_forget`: dry-run by default, cascades through derived concepts, rewrites mixed ones, tombstones the source (hashes only), clears traces and caches, and rejects pending dream reviews that would undo it ([Forgetting](#forgetting)) |
 | Dreaming | Per-signal control (`DREAM_SIGNALS`), change budget with full rollback (`DREAM_MAX_CHANGES`), `dream:`-prefixed commits with a one-command revert, deterministic verification before commit (`DREAM_VERIFY`), step-limited dreams rolled back, derived concepts for syntheses, review mode (`DREAM_MODE=review`) with a web panel, `/api/dream/preview` and `/api/dream/status` |
 | Security | CORS locked to same-origin unless `CORS_ORIGINS` is set; `AUTH_REQUIRED=true` refuses to start without `AUTH_TOKEN`; a second read-only token (`AUTH_TOKEN_READONLY`); tool annotations (`readOnlyHint`, `destructiveHint`); a startup warning when auth is off on all interfaces ([Auth](#auth)) |
+| Exact file API | `FILE_API=true`: `/api/file` creates, replaces or deletes one concept at an exact path with no model in the loop, with a content hash for safe concurrent edits ([Exact file API](#exact-file-api)) |
 | Config | Single `LLM_API_*` provider config (legacy per-provider keys removed); `HOST` / `BIND_ADDRESS` for who can connect; `BUNDLE_PATH` for the compose mount; every documented setting forwarded by both compose files |
 | Ops | `/health`; CI (build, tests, container image build) on every PR, Docker publish on release tags only; `docs/TESTING.md` with `scripts/rollout-test.mjs`, `make-test-bundle.mjs`, `dream-now.mjs`, `mcp-call.mjs` and `soak-report.mjs`; recall benchmark (`pnpm bench:recall`) |
 
@@ -677,6 +699,7 @@ setting from `.env`; an empty value means "use the default".
 | `AUTH_TOKEN_READONLY` | unset | A second token that can only read (see [Read-only access](#read-only-access)); needs `AUTH_TOKEN` |
 | `BIND_ADDRESS` | all interfaces | Host interface the compose file publishes the port on (`127.0.0.1`, a Tailscale IP) |
 | `CORS_ORIGINS` | same-origin | Comma list, or `*` |
+| `FILE_API` | off | `true` mounts the [exact file API](#exact-file-api) at `/api/file` (full token only for writes) |
 | `PROFILES_ROOT` / `ADMIN_TOKEN` | off | [Profiles](#profiles-several-isolated-memories-on-one-server) (commented out in compose) |
 | `GIT_AUTOCOMMIT` / `MUTATION_ROLLBACK` | `true` / `true` | Commit every mutation; transactional runs |
 | `LLM_TIMEOUT` | none | Deadline for one model run, e.g. `30m` |
