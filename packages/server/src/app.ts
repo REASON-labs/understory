@@ -7,6 +7,7 @@ import { mcpRouter } from "./mcp/http.js";
 import { browseRouter } from "./api/browse.js";
 import { chatRouter } from "./api/chat.js";
 import { dreamRouter } from "./api/dream.js";
+import { filesRouter } from "./api/files.js";
 import { apiAccessGuard, mcpAccessGuard } from "./access.js";
 import type { MemoryHost, ResolvedMemory } from "./host.js";
 
@@ -20,6 +21,8 @@ export interface AppOptions {
    * healthchecks cannot carry a token, and it exposes nothing sensitive.
    */
   health?: Router;
+  /** Exact file API at /api/file (FILE_API=true). Off by default. */
+  fileApi?: boolean;
 }
 
 /**
@@ -63,7 +66,7 @@ export function buildApp(host: MemoryHost, options: AppOptions = {}): Express {
         "Mcp-Protocol-Version",
         "Last-Event-ID",
       ],
-      methods: ["GET", "POST", "DELETE", "OPTIONS"],
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     })
   );
   app.use(express.json({ limit: "4mb" }));
@@ -76,7 +79,9 @@ export function buildApp(host: MemoryHost, options: AppOptions = {}): Express {
   const routersFor = (kb: KnowledgeBase) => {
     let set = routers.get(kb);
     if (!set) {
-      set = { mcp: mcpRouter(kb), api: express.Router().use(browseRouter(kb)).use(chatRouter(kb)).use(dreamRouter(kb)) };
+      const api = express.Router().use(browseRouter(kb)).use(chatRouter(kb)).use(dreamRouter(kb));
+      if (options.fileApi) api.use(filesRouter(kb));
+      set = { mcp: mcpRouter(kb), api };
       routers.set(kb, set);
     }
     return set;
